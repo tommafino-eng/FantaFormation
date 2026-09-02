@@ -17,11 +17,11 @@ import javax.xml.parsers.DocumentBuilderFactory;
 
 public class XlsxReader {
 
+    private static final int MAX_PLAYERS = 25;
+
     public static List<String[]> read(
             Context context,
             Uri uri) throws Exception {
-
-        List<String[]> rows = new ArrayList<>();
 
         InputStream input =
                 context.getContentResolver()
@@ -43,11 +43,11 @@ public class XlsxReader {
 
             String name = entry.getName();
 
-            if (name.equals("xl/sharedStrings.xml")) {
+            if ("xl/sharedStrings.xml".equals(name)) {
                 sharedStringsXml = readEntry(zip);
             }
 
-            if (name.equals("xl/worksheets/sheet1.xml")) {
+            if ("xl/worksheets/sheet1.xml".equals(name)) {
                 sheetXml = readEntry(zip);
             }
         }
@@ -61,76 +61,220 @@ public class XlsxReader {
         List<String> sharedStrings =
                 parseSharedStrings(sharedStringsXml);
 
-        Document sheetDocument =
-                parseXml(sheetXml);
+        Document document = parseXml(sheetXml);
 
-        NodeList rowNodes =
-                sheetDocument.getElementsByTagName("row");
+        NodeList rows =
+                document.getElementsByTagName("row");
 
-        for (int i = 0; i < rowNodes.getLength(); i++) {
+        List<String[]> result = new ArrayList<>();
 
-            Node rowNode = rowNodes.item(i);
+        boolean insideOnePisa = false;
 
-            NodeList cells =
-                    ((org.w3c.dom.Element) rowNode)
-                            .getElementsByTagName("c");
+        for (int i = 0; i < rows.getLength(); i++) {
 
-            List<String> values = new ArrayList<>();
+            Node row = rows.item(i);
 
-            for (int j = 0; j < cells.getLength(); j++) {
+            List<String> values =
+                    getRowValues(row, sharedStrings);
 
-                org.w3c.dom.Element cell =
-                        (org.w3c.dom.Element) cells.item(j);
+            if (values.isEmpty()) {
+                continue;
+            }
 
-                String value = "";
+            String firstValue =
+                    values.get(0).trim();
 
-                Node type =
-                        cell.getAttributes()
-                                .getNamedItem("t");
+            if (!insideOnePisa) {
 
-                NodeList valueNodes =
-                        cell.getElementsByTagName("v");
+                if (isOnePisa(firstValue)) {
+                    insideOnePisa = true;
+                }
 
-                if (valueNodes.getLength() > 0) {
+                continue;
+            }
 
-                    value =
-                            valueNodes.item(0)
-                                    .getTextContent();
+            /*
+             * Una nuova intestazione indica
+             * l'inizio della squadra successiva.
+             */
+            if (isTeamHeader(firstValue)) {
+                break;
+            }
 
-                    if (type != null &&
-                            type.getNodeValue()
-                                    .equals("s")) {
+            String player = "";
 
-                        try {
-                            int index =
-                                    Integer.parseInt(value);
+            for (String value : values) {
 
-                            if (index >= 0 &&
-                                    index < sharedStrings.size()) {
+                String clean =
+                        value.trim();
 
-                                value =
-                                        sharedStrings.get(index);
-                            }
-                        } catch (Exception ignored) {
-                        }
+                if (clean.isEmpty()) {
+                    continue;
+                }
+
+                if (clean.equalsIgnoreCase("costo")) {
+                    continue;
+                }
+
+                if (isNumber(clean)) {
+                    continue;
+                }
+
+                player = clean;
+                break;
+            }
+
+            if (!player.isEmpty()) {
+
+                String cost = "";
+
+                for (String value : values) {
+
+                    String clean =
+                            value.trim();
+
+                    if (isNumber(clean)) {
+                        cost = clean;
+                        break;
                     }
                 }
 
-                values.add(value);
+                result.add(new String[]{
+                        "",
+                        player,
+                        cost
+                });
             }
 
-            while (values.size() < 3) {
-                values.add("");
+            if (result.size() >= MAX_PLAYERS) {
+                break;
             }
-
-            rows.add(new String[]{
-                    values.get(0),
-                    values.get(1),
-                    values.get(2)
-            });
         }
 
-        return rows;
+        if (!insideOnePisa) {
+            throw new Exception(
+                    "Sezione 'One Pisa' non trovata"
+            );
+        }
+
+        if (result.isEmpty()) {
+            throw new Exception(
+                    "Nessun giocatore trovato nella sezione One Pisa"
+            );
+        }
+
+        return result;
+    }
+
+    private static boolean isOnePisa(
+            String value) {
+
+        String normalized =
+                value.toLowerCase()
+                        .replace(" ", "")
+                        .trim();
+
+        return normalized.equals("onepisa");
+    }
+
+    private static boolean isTeamHeader(
+            String value) {
+
+        String normalized =
+                value.toLowerCase()
+                        .replace(" ", "")
+                        .trim();
+
+        if (normalized.isEmpty()) {
+            return false;
+        }
+
+        if (normalized.equals("costo")) {
+            return false;
+        }
+
+        /*
+         * Evitiamo di considerare un nome giocatore
+         * come intestazione.
+         *
+         * Le intestazioni delle squadre nel tuo file
+         * non hanno un costo numerico associato.
+         */
+        return normalized.contains("farmers")
+                || normalized.contains("team")
+                || normalized.contains("skibidi")
+                || normalized.contains("fatturage");
+    }
+
+    private static boolean isNumber(
+            String value) {
+
+        try {
+            Double.parseDouble(value.replace(",", "."));
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private static List<String> getRowValues(
+            Node row,
+            List<String> sharedStrings) {
+
+        List<String> values =
+                new ArrayList<>();
+
+        NodeList cells =
+                ((org.w3c.dom.Element) row)
+                        .getElementsByTagName("c");
+
+        for (int i = 0;
+             i < cells.getLength();
+             i++) {
+
+            org.w3c.dom.Element cell =
+                    (org.w3c.dom.Element) cells.item(i);
+
+            String value = "";
+
+            Node type =
+                    cell.getAttributes()
+                            .getNamedItem("t");
+
+            NodeList valueNodes =
+                    cell.getElementsByTagName("v");
+
+            if (valueNodes.getLength() > 0) {
+
+                value =
+                        valueNodes.item(0)
+                                .getTextContent();
+
+                if (type != null &&
+                        "s".equals(
+                                type.getNodeValue())) {
+
+                    try {
+
+                        int index =
+                                Integer.parseInt(value);
+
+                        if (index >= 0 &&
+                                index < sharedStrings.size()) {
+
+                            value =
+                                    sharedStrings.get(index);
+                        }
+
+                    } catch (Exception ignored) {
+                    }
+                }
+            }
+
+            values.add(value);
+        }
+
+        return values;
     }
 
     private static String readEntry(
@@ -144,6 +288,7 @@ public class XlsxReader {
         int count;
 
         while ((count = zip.read(buffer)) != -1) {
+
             result.append(
                     new String(
                             buffer,
@@ -173,7 +318,8 @@ public class XlsxReader {
     private static List<String> parseSharedStrings(
             String xml) throws Exception {
 
-        List<String> result = new ArrayList<>();
+        List<String> result =
+                new ArrayList<>();
 
         if (xml == null) {
             return result;
@@ -189,7 +335,8 @@ public class XlsxReader {
              i < strings.getLength();
              i++) {
 
-            Node stringNode = strings.item(i);
+            Node stringNode =
+                    strings.item(i);
 
             NodeList textNodes =
                     ((org.w3c.dom.Element) stringNode)
