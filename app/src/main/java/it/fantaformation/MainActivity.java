@@ -1,6 +1,7 @@
 package it.fantaformation;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.os.Bundle;
 import android.content.Intent;
 import android.net.Uri;
@@ -41,6 +42,7 @@ public class MainActivity extends Activity {
     private TextView resultText;
 
     private List<String[]> formazione;
+    private PlayerRoleCache roleCache;
 
     private final ExecutorService executor =
             Executors.newSingleThreadExecutor();
@@ -73,6 +75,7 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
+        roleCache = new PlayerRoleCache(this);
         buildInterface();
     }
 
@@ -629,10 +632,18 @@ public class MainActivity extends Activity {
                     );
 
             player.role =
-                    RoleExtractor.extractFromPlayerProfile(
+                    extractRoleFromPlayerElement(
                             link,
                             row
                     );
+
+            if (player.role.isEmpty()) {
+
+                player.role =
+                        extractRoleFromAttributes(
+                                row
+                        );
+            }
 
             String key =
                     normalize(
@@ -649,6 +660,156 @@ public class MainActivity extends Activity {
         }
 
         return result;
+    }
+
+    private String extractRoleFromPlayerElement(
+            Element link,
+            Element row
+    ) {
+
+        String[] attributes = {
+                "data-role",
+                "data-ruolo",
+                "role",
+                "title",
+                "aria-label",
+                "class"
+        };
+
+        for (String attribute :
+                attributes) {
+
+            String value =
+                    link.attr(
+                            attribute
+                    );
+
+            String role =
+                    roleFromText(
+                            value
+                    );
+
+            if (!role.isEmpty()) {
+                return role;
+            }
+        }
+
+        if (row != null) {
+
+            Elements elements =
+                    row.select(
+                            "[data-role], " +
+                            "[data-ruolo], " +
+                            "[title], " +
+                            "[aria-label]"
+                    );
+
+            for (Element element :
+                    elements) {
+
+                for (String attribute :
+                        attributes) {
+
+                    String value =
+                            element.attr(
+                                    attribute
+                            );
+
+                    String role =
+                            roleFromText(
+                                    value
+                            );
+
+                    if (!role.isEmpty()) {
+                        return role;
+                    }
+                }
+            }
+        }
+
+        return "";
+    }
+
+    private String extractRoleFromAttributes(
+            Element row
+    ) {
+
+        if (row == null) {
+            return "";
+        }
+
+        String html =
+                row.outerHtml();
+
+        return roleFromText(
+                html
+        );
+    }
+
+    private String roleFromText(
+            String text
+    ) {
+
+        if (text == null) {
+            return "";
+        }
+
+        String normalized =
+                normalize(text);
+
+        if (normalized.contains(
+                "portiere"
+        )) {
+            return "P";
+        }
+
+        if (normalized.contains(
+                "difensore"
+        )) {
+            return "D";
+        }
+
+        if (normalized.contains(
+                "centrocampista"
+        )) {
+            return "C";
+        }
+
+        if (normalized.contains(
+                "attaccante"
+        )) {
+            return "A";
+        }
+
+        /*
+         * Abbreviazioni consentite soltanto se
+         * presenti come attributo strutturato.
+         */
+        if (normalized.matches(
+                ".*\\bp\\b.*"
+        )) {
+            return "P";
+        }
+
+        if (normalized.matches(
+                ".*\\bd\\b.*"
+        )) {
+            return "D";
+        }
+
+        if (normalized.matches(
+                ".*\\bc\\b.*"
+        )) {
+            return "C";
+        }
+
+        if (normalized.matches(
+                ".*\\ba\\b.*"
+        )) {
+            return "A";
+        }
+
+        return "";
     }
 
     private String extractTeam(
@@ -1191,12 +1352,20 @@ public class MainActivity extends Activity {
 
             if (officialPlayer == null) {
 
+                String normalizedName =
+                        normalize(excelName);
+
+                String cachedRole =
+                        roleCache.getRole(
+                                normalizedName
+                        );
+
                 Player player =
                         new Player(
                                 excelName,
                                 excelName,
                                 "",
-                                "",
+                                cachedRole,
                                 0,
                                 0,
                                 0,
@@ -1210,11 +1379,29 @@ public class MainActivity extends Activity {
                 continue;
             }
 
+            String normalizedOfficialName =
+                    normalize(
+                            officialPlayer.name
+                    );
+
+            String role =
+                    officialPlayer.role;
+
+            if (role.isEmpty()) {
+
+                String cachedRole =
+                        roleCache.getRole(
+                                normalizedOfficialName
+                        );
+
+                if (!cachedRole.isEmpty()) {
+                    role = cachedRole;
+                }
+            }
+
             ProbabilityInfo probability =
                     probabilities.get(
-                            normalize(
-                                    officialPlayer.name
-                            )
+                            normalizedOfficialName
                     );
 
             int probable =
@@ -1232,20 +1419,15 @@ public class MainActivity extends Activity {
 
             int externalAgreement = 0;
 
-            String normalized =
-                    normalize(
-                            officialPlayer.name
-                    );
-
             if (gazzetta.containsKey(
-                    normalized
+                    normalizedOfficialName
             )) {
 
                 externalAgreement++;
             }
 
             if (sky.containsKey(
-                    normalized
+                    normalizedOfficialName
             )) {
 
                 externalAgreement++;
@@ -1256,7 +1438,7 @@ public class MainActivity extends Activity {
                             excelName,
                             officialPlayer.name,
                             officialPlayer.team,
-                            officialPlayer.role,
+                            role,
                             officialPlayer.classicQuote,
                             officialPlayer.fvm,
                             probable,
@@ -1620,6 +1802,9 @@ public class MainActivity extends Activity {
                 "RUOLI CLASSIC RILEVATI\n\n"
         );
 
+        ArrayList<Player> playersWithoutRole =
+                new ArrayList<>();
+
         for (Player player :
                 players) {
 
@@ -1634,6 +1819,8 @@ public class MainActivity extends Activity {
                 sb.append(
                         "RUOLO NON DETERMINATO"
                 );
+
+                playersWithoutRole.add(player);
 
             } else {
 
@@ -1691,6 +1878,134 @@ public class MainActivity extends Activity {
         }
 
         sb.append("\n");
+
+        if (!playersWithoutRole.isEmpty()) {
+
+            showRoleAssignmentDialog(
+                    playersWithoutRole,
+                    sb,
+                    best
+            );
+
+            return;
+        }
+
+        displayFormationResult(sb, best);
+    }
+
+    private void showRoleAssignmentDialog(
+            ArrayList<Player> playersWithoutRole,
+            StringBuilder previousResult,
+            FormationResult best
+    ) {
+
+        int playerIndex = 0;
+
+        showRoleDialogForPlayer(
+                playersWithoutRole,
+                playerIndex,
+                previousResult,
+                best
+        );
+    }
+
+    private void showRoleDialogForPlayer(
+            ArrayList<Player> playersWithoutRole,
+            int playerIndex,
+            StringBuilder previousResult,
+            FormationResult best
+    ) {
+
+        if (playerIndex >= playersWithoutRole.size()) {
+
+            displayFormationResult(
+                    previousResult,
+                    best
+            );
+
+            return;
+        }
+
+        Player player =
+                playersWithoutRole.get(
+                        playerIndex
+                );
+
+        String[] roleOptions = {
+                "PORTIERE (P)",
+                "DIFENSORE (D)",
+                "CENTROCAMPISTA (C)",
+                "ATTACCANTE (A)"
+        };
+
+        AlertDialog.Builder builder =
+                new AlertDialog.Builder(
+                        MainActivity.this
+                );
+
+        builder.setTitle(
+                "Assegna ruolo a: " +
+                player.excelName
+        );
+
+        builder.setItems(
+                roleOptions,
+                (dialog, which) -> {
+
+                    String selectedRole = "";
+
+                    switch (which) {
+
+                        case 0:
+                            selectedRole = "P";
+                            break;
+
+                        case 1:
+                            selectedRole = "D";
+                            break;
+
+                        case 2:
+                            selectedRole = "C";
+                            break;
+
+                        case 3:
+                            selectedRole = "A";
+                            break;
+                    }
+
+                    String normalizedName =
+                            normalize(
+                                    player.officialName.isEmpty()
+                                            ? player.excelName
+                                            : player.officialName
+                            );
+
+                    roleCache.setRole(
+                            normalizedName,
+                            selectedRole
+                    );
+
+                    player.role =
+                            selectedRole;
+
+                    showRoleDialogForPlayer(
+                            playersWithoutRole,
+                            playerIndex + 1,
+                            previousResult,
+                            best
+                    );
+                }
+        );
+
+        builder.setCancelable(false);
+
+        builder.show();
+    }
+
+    private void displayFormationResult(
+            StringBuilder sb,
+            FormationResult best
+    ) {
 
         if (!best.valid) {
 
