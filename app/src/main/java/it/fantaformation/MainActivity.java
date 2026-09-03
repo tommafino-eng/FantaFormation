@@ -4,7 +4,6 @@ import android.app.Activity;
 import android.os.Bundle;
 import android.content.Intent;
 import android.net.Uri;
-import android.provider.Settings;
 import android.view.View;
 import android.widget.Button;
 import android.widget.LinearLayout;
@@ -17,16 +16,15 @@ import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.jsoup.select.Elements;
 
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.io.BufferedReader;
 import java.io.InputStream;
 import java.io.InputStreamReader;
-import java.net.HttpURLConnection;
-import java.net.URL;
 import java.text.Normalizer;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -43,7 +41,9 @@ public class MainActivity extends Activity {
     private TextView resultText;
 
     private ArrayList<String[]> formazione;
-    private final ExecutorService executor = Executors.newSingleThreadExecutor();
+
+    private final ExecutorService executor =
+            Executors.newSingleThreadExecutor();
 
     private static final String FANTACALCIO_QUOTE =
             "https://www.fantacalcio.it/quotazioni-fantacalcio/2026-27";
@@ -94,7 +94,8 @@ public class MainActivity extends Activity {
         TextView description = new TextView(this);
         description.setText(
                 "Carica la rosa One Pisa dal file Excel. " +
-                "L'app recupera i ruoli Classic ufficiali e analizza le probabili formazioni."
+                "L'app recupera i ruoli Classic ufficiali e analizza " +
+                "le probabili formazioni."
         );
         description.setTextSize(16);
         description.setPadding(0, 0, 0, 25);
@@ -120,17 +121,21 @@ public class MainActivity extends Activity {
         root.addView(resultText);
 
         scroll.addView(root);
+
         setContentView(scroll);
 
         loadButton.setOnClickListener(v -> chooseExcel());
 
         automateButton.setOnClickListener(v -> {
+
             if (formazione == null || formazione.isEmpty()) {
+
                 Toast.makeText(
                         MainActivity.this,
                         "Prima carica la formazione Excel",
                         Toast.LENGTH_LONG
                 ).show();
+
                 return;
             }
 
@@ -150,11 +155,16 @@ public class MainActivity extends Activity {
 
     private void chooseExcel() {
 
-        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        Intent intent =
+                new Intent(Intent.ACTION_OPEN_DOCUMENT);
+
         intent.setType(
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         );
-        intent.addCategory(Intent.CATEGORY_OPENABLE);
+
+        intent.addCategory(
+                Intent.CATEGORY_OPENABLE
+        );
 
         startActivityForResult(intent, 100);
     }
@@ -165,12 +175,18 @@ public class MainActivity extends Activity {
             int resultCode,
             Intent data
     ) {
-        super.onActivityResult(requestCode, resultCode, data);
+
+        super.onActivityResult(
+                requestCode,
+                resultCode,
+                data
+        );
 
         if (requestCode != 100 ||
                 resultCode != RESULT_OK ||
                 data == null ||
                 data.getData() == null) {
+
             return;
         }
 
@@ -180,30 +196,50 @@ public class MainActivity extends Activity {
 
             try {
 
-                InputStream inputStream =
-                        getContentResolver().openInputStream(uri);
-
+                /*
+                 * CORRETTO:
+                 *
+                 * XlsxReader attuale richiede:
+                 *
+                 * read(Context, Uri)
+                 *
+                 * Non InputStream.
+                 */
                 ArrayList<String[]> result =
-                        XlsxReader.read(inputStream);
+                        XlsxReader.read(
+                                MainActivity.this,
+                                uri
+                        );
 
                 runOnUiThread(() -> {
 
                     formazione = result;
 
-                    StringBuilder sb = new StringBuilder();
+                    StringBuilder sb =
+                            new StringBuilder();
 
                     sb.append("FORMAZIONE ONE PISA\n");
                     sb.append("====================\n\n");
 
                     for (String[] row : result) {
 
-                        String player = row.length > 1 ? row[1] : "";
-                        String cost = row.length > 2 ? row[2] : "";
+                        String player =
+                                row.length > 1
+                                        ? row[1]
+                                        : "";
+
+                        String cost =
+                                row.length > 2
+                                        ? row[2]
+                                        : "";
 
                         sb.append(player);
 
-                        if (cost != null && !cost.trim().isEmpty()) {
-                            sb.append("  -  ").append(cost);
+                        if (cost != null &&
+                                !cost.trim().isEmpty()) {
+
+                            sb.append("  -  ")
+                                    .append(cost);
                         }
 
                         sb.append("\n");
@@ -212,7 +248,9 @@ public class MainActivity extends Activity {
                     sb.append("\nTotale giocatori: ")
                             .append(result.size());
 
-                    resultText.setText(sb.toString());
+                    resultText.setText(
+                            sb.toString()
+                    );
 
                     Toast.makeText(
                             MainActivity.this,
@@ -225,7 +263,9 @@ public class MainActivity extends Activity {
 
                 runOnUiThread(() ->
                         resultText.setText(
-                                "Errore lettura Excel:\n" +
+                                "Errore lettura Excel:\n\n" +
+                                e.getClass().getSimpleName() +
+                                "\n" +
                                 e.getMessage()
                         )
                 );
@@ -249,23 +289,49 @@ public class MainActivity extends Activity {
 
             try {
 
-                String quotesHtml = download(FANTACALCIO_QUOTE);
-                String probabiliHtml = download(FANTACALCIO_PROBABILI);
+                String quotesHtml =
+                        download(
+                                FANTACALCIO_QUOTE
+                        );
 
-                String gazzettaHtml = download(GAZZETTA_PROBABILI);
-                String skyHtml = download(SKY_PROBABILI);
+                String probabiliHtml =
+                        download(
+                                FANTACALCIO_PROBABILI
+                        );
 
-                Map<String, OfficialPlayer> officialPlayers =
-                        parseOfficialPlayers(quotesHtml);
+                String gazzettaHtml =
+                        download(
+                                GAZZETTA_PROBABILI
+                        );
 
-                Map<String, ProbabilityInfo> probabilities =
-                        parseFantacalcioProbabili(probabiliHtml);
+                String skyHtml =
+                        download(
+                                SKY_PROBABILI
+                        );
 
-                Map<String, Integer> gazzetta =
-                        parseExternalSource(gazzettaHtml);
+                Map<String, OfficialPlayer>
+                        officialPlayers =
+                        parseOfficialPlayers(
+                                quotesHtml
+                        );
 
-                Map<String, Integer> sky =
-                        parseExternalSource(skyHtml);
+                Map<String, ProbabilityInfo>
+                        probabilities =
+                        parseFantacalcioProbabili(
+                                probabiliHtml
+                        );
+
+                Map<String, Integer>
+                        gazzetta =
+                        parseExternalSource(
+                                gazzettaHtml
+                        );
+
+                Map<String, Integer>
+                        sky =
+                        parseExternalSource(
+                                skyHtml
+                        );
 
                 ArrayList<Player> players =
                         buildPlayers(
@@ -276,12 +342,16 @@ public class MainActivity extends Activity {
                         );
 
                 FormationResult best =
-                        calculateBestFormation(players);
+                        calculateBestFormation(
+                                players
+                        );
 
-                runOnUiThread(() -> displayResult(
-                        players,
-                        best
-                ));
+                runOnUiThread(() ->
+                        displayResult(
+                                players,
+                                best
+                        )
+                );
 
             } catch (Exception e) {
 
@@ -297,27 +367,42 @@ public class MainActivity extends Activity {
         });
     }
 
-    private String download(String address) throws Exception {
+    private String download(
+            String address
+    ) throws Exception {
 
-        URL url = new URL(address);
+        URL url =
+                new URL(address);
 
         HttpURLConnection connection =
-                (HttpURLConnection) url.openConnection();
+                (HttpURLConnection)
+                        url.openConnection();
 
         connection.setRequestMethod("GET");
-        connection.setConnectTimeout(15000);
-        connection.setReadTimeout(20000);
+
+        connection.setConnectTimeout(
+                15000
+        );
+
+        connection.setReadTimeout(
+                20000
+        );
 
         connection.setRequestProperty(
                 "User-Agent",
                 "Mozilla/5.0 (Android) AppleWebKit/537.36"
         );
 
-        int code = connection.getResponseCode();
+        int code =
+                connection.getResponseCode();
 
         if (code < 200 || code >= 400) {
+
             throw new Exception(
-                    "HTTP " + code + " - " + address
+                    "HTTP " +
+                    code +
+                    " - " +
+                    address
             );
         }
 
@@ -332,41 +417,43 @@ public class MainActivity extends Activity {
                         )
                 );
 
-        StringBuilder result = new StringBuilder();
+        StringBuilder result =
+                new StringBuilder();
 
         String line;
 
         while ((line = reader.readLine()) != null) {
-            result.append(line).append('\n');
+
+            result.append(line)
+                    .append('\n');
         }
 
         reader.close();
+
         connection.disconnect();
 
         return result.toString();
     }
-
-    /*
-     * ============================================================
-     * PLAYER MODEL
-     * ============================================================
-     */
 
     private static class OfficialPlayer {
 
         String name = "";
         String team = "";
         String role = "";
+
         int classicQuote = 0;
         int fvm = 0;
+
         String profileUrl = "";
     }
 
     private static class ProbabilityInfo {
 
         int percentage = 0;
+
         boolean starter = false;
         boolean bench = false;
+
         String team = "";
     }
 
@@ -374,6 +461,7 @@ public class MainActivity extends Activity {
 
         String excelName;
         String officialName;
+
         String team;
         String role;
 
@@ -400,16 +488,36 @@ public class MainActivity extends Activity {
                 boolean starter,
                 boolean bench
         ) {
-            this.excelName = excelName;
-            this.officialName = officialName;
-            this.team = team;
-            this.role = role;
-            this.quote = quote;
-            this.fvm = fvm;
-            this.probable = probable;
-            this.externalAgreement = externalAgreement;
-            this.starter = starter;
-            this.bench = bench;
+
+            this.excelName =
+                    excelName;
+
+            this.officialName =
+                    officialName;
+
+            this.team =
+                    team;
+
+            this.role =
+                    role;
+
+            this.quote =
+                    quote;
+
+            this.fvm =
+                    fvm;
+
+            this.probable =
+                    probable;
+
+            this.externalAgreement =
+                    externalAgreement;
+
+            this.starter =
+                    starter;
+
+            this.bench =
+                    bench;
 
             calculateScore();
         }
@@ -418,27 +526,20 @@ public class MainActivity extends Activity {
 
             score = 0;
 
-            /*
-             * La probabilità di essere titolare è il fattore
-             * principale.
-             */
-            score += probable * 1.50;
+            score +=
+                    probable * 1.50;
 
-            /*
-             * Conferma da Gazzetta/Sky.
-             */
-            score += externalAgreement * 12.0;
+            score +=
+                    externalAgreement * 12.0;
 
-            /*
-             * FVM come indicatore di qualità.
-             * Lo teniamo volutamente meno importante della titolarità.
-             */
-            score += Math.min(fvm, 300) * 0.12;
+            score +=
+                    Math.min(
+                            fvm,
+                            300
+                    ) * 0.12;
 
-            /*
-             * Quotazione.
-             */
-            score += quote * 0.15;
+            score +=
+                    quote * 0.15;
 
             if (starter) {
                 score += 20;
@@ -454,77 +555,79 @@ public class MainActivity extends Activity {
         }
     }
 
-    /*
-     * ============================================================
-     * PARSING LISTONE UFFICIALE
-     * ============================================================
-     */
-
-    private Map<String, OfficialPlayer> parseOfficialPlayers(
+    private Map<String, OfficialPlayer>
+    parseOfficialPlayers(
             String html
     ) {
 
-        Map<String, OfficialPlayer> result =
+        Map<String, OfficialPlayer>
+                result =
                 new LinkedHashMap<>();
 
-        Document document = Jsoup.parse(html);
+        Document document =
+                Jsoup.parse(html);
 
-        /*
-         * Il Listone ufficiale è una tabella.
-         * Cerchiamo le righe che contengono un link alla
-         * scheda del calciatore.
-         */
-        Elements links = document.select(
-                "a[href*='/serie-a/squadre/']"
-        );
+        Elements links =
+                document.select(
+                        "a[href*='/serie-a/squadre/']"
+                );
 
         for (Element link : links) {
 
-            String name = cleanName(link.text());
+            String name =
+                    cleanName(
+                            link.text()
+                    );
 
             if (name.isEmpty()) {
                 continue;
             }
 
-            String href = link.absUrl("href");
+            String href =
+                    link.absUrl("href");
 
             if (href.isEmpty()) {
-                href = link.attr("href");
+
+                href =
+                        link.attr("href");
             }
 
-            Element row = link.closest("tr");
+            Element row =
+                    link.closest("tr");
 
             if (row == null) {
                 row = link.parent();
             }
 
-            String rowText = row != null
-                    ? row.text()
-                    : "";
+            String rowText =
+                    row != null
+                            ? row.text()
+                            : "";
 
             OfficialPlayer player =
                     new OfficialPlayer();
 
-            player.name = name;
-            player.profileUrl = href;
+            player.name =
+                    name;
 
-            player.team = extractTeam(rowText);
+            player.profileUrl =
+                    href;
+
+            player.team =
+                    extractTeam(
+                            rowText
+                    );
 
             player.classicQuote =
-                    extractClassicQuote(row);
+                    extractClassicQuote(
+                            row
+                    );
 
             player.fvm =
-                    extractFvm(row);
+                    extractFvm(
+                            row
+                    );
 
-            /*
-             * IMPORTANTE:
-             *
-             * Il ruolo viene cercato prima negli attributi e negli
-             * elementi direttamente associati al giocatore.
-             *
-             * Non facciamo più la vecchia ricerca "per vicinanza"
-             * di POR/DIF/CEN/ATT.
-             */
             player.role =
                     extractRoleFromPlayerElement(
                             link,
@@ -533,21 +636,23 @@ public class MainActivity extends Activity {
 
             if (player.role.isEmpty()) {
 
-                /*
-                 * Secondo tentativo: attributi strutturati della riga.
-                 */
                 player.role =
-                        extractRoleFromAttributes(row);
+                        extractRoleFromAttributes(
+                                row
+                        );
             }
 
-            /*
-             * Evitiamo duplicati.
-             */
             String key =
-                    normalize(player.name);
+                    normalize(
+                            player.name
+                    );
 
             if (!result.containsKey(key)) {
-                result.put(key, player);
+
+                result.put(
+                        key,
+                        player
+                );
             }
         }
 
@@ -568,11 +673,18 @@ public class MainActivity extends Activity {
                 "class"
         };
 
-        for (String attribute : attributes) {
+        for (String attribute :
+                attributes) {
 
-            String value = link.attr(attribute);
+            String value =
+                    link.attr(
+                            attribute
+                    );
 
-            String role = roleFromText(value);
+            String role =
+                    roleFromText(
+                            value
+                    );
 
             if (!role.isEmpty()) {
                 return role;
@@ -589,15 +701,21 @@ public class MainActivity extends Activity {
                             "[aria-label]"
                     );
 
-            for (Element element : elements) {
+            for (Element element :
+                    elements) {
 
-                for (String attribute : attributes) {
+                for (String attribute :
+                        attributes) {
 
                     String value =
-                            element.attr(attribute);
+                            element.attr(
+                                    attribute
+                            );
 
                     String role =
-                            roleFromText(value);
+                            roleFromText(
+                                    value
+                            );
 
                     if (!role.isEmpty()) {
                         return role;
@@ -617,12 +735,17 @@ public class MainActivity extends Activity {
             return "";
         }
 
-        String html = row.outerHtml();
+        String html =
+                row.outerHtml();
 
-        return roleFromText(html);
+        return roleFromText(
+                html
+        );
     }
 
-    private String roleFromText(String text) {
+    private String roleFromText(
+            String text
+    ) {
 
         if (text == null) {
             return "";
@@ -631,51 +754,99 @@ public class MainActivity extends Activity {
         String normalized =
                 normalize(text);
 
-        /*
-         * Cerchiamo solamente indicatori espliciti.
-         * Non prendiamo una parola casuale dal testo della pagina.
-         */
-
-        if (normalized.contains("portiere") ||
-                normalized.matches(".*\\bp\\b.*")) {
+        if (normalized.contains(
+                "portiere"
+        )) {
             return "P";
         }
 
-        if (normalized.contains("difensore") ||
-                normalized.matches(".*\\bd\\b.*")) {
+        if (normalized.contains(
+                "difensore"
+        )) {
             return "D";
         }
 
-        if (normalized.contains("centrocampista") ||
-                normalized.matches(".*\\bc\\b.*")) {
+        if (normalized.contains(
+                "centrocampista"
+        )) {
             return "C";
         }
 
-        if (normalized.contains("attaccante") ||
-                normalized.matches(".*\\ba\\b.*")) {
+        if (normalized.contains(
+                "attaccante"
+        )) {
+            return "A";
+        }
+
+        /*
+         * Abbreviazioni consentite soltanto se
+         * presenti come attributo strutturato.
+         */
+        if (normalized.matches(
+                ".*\\bp\\b.*"
+        )) {
+            return "P";
+        }
+
+        if (normalized.matches(
+                ".*\\bd\\b.*"
+        )) {
+            return "D";
+        }
+
+        if (normalized.matches(
+                ".*\\bc\\b.*"
+        )) {
+            return "C";
+        }
+
+        if (normalized.matches(
+                ".*\\ba\\b.*"
+        )) {
             return "A";
         }
 
         return "";
     }
 
-    private String extractTeam(String text) {
+    private String extractTeam(
+            String text
+    ) {
 
         if (text == null) {
             return "";
         }
 
         String upper =
-                text.toUpperCase(Locale.ROOT);
+                text.toUpperCase(
+                        Locale.ROOT
+                );
 
         String[] teams = {
-                "INT", "COM", "MIL", "ROM", "NAP",
-                "JUV", "ATA", "BOL", "LAZ", "FIO",
-                "PAR", "GEN", "MON", "TOR", "UDI",
-                "SAS", "LEC", "CAG", "VEN", "FRO"
+                "INT",
+                "COM",
+                "MIL",
+                "ROM",
+                "NAP",
+                "JUV",
+                "ATA",
+                "BOL",
+                "LAZ",
+                "FIO",
+                "PAR",
+                "GEN",
+                "MON",
+                "TOR",
+                "UDI",
+                "SAS",
+                "LEC",
+                "CAG",
+                "VEN",
+                "FRO"
         };
 
-        for (String team : teams) {
+        for (String team :
+                teams) {
 
             if (upper.contains(team)) {
                 return team;
@@ -685,138 +856,129 @@ public class MainActivity extends Activity {
         return "";
     }
 
-    private int extractClassicQuote(Element row) {
+    private int extractClassicQuote(
+            Element row
+    ) {
 
         if (row == null) {
             return 0;
         }
 
-        /*
-         * Il testo della tabella contiene le quotazioni Classic
-         * e Mantra.
-         *
-         * Recuperiamo i numeri direttamente dalle celle.
-         */
-        Elements cells = row.select("td");
+        Elements cells =
+                row.select("td");
 
         ArrayList<Integer> numbers =
                 new ArrayList<>();
 
-        for (Element cell : cells) {
+        for (Element cell :
+                cells) {
 
-            String text = cell.text().trim();
+            String text =
+                    cell.text().trim();
 
             if (text.matches("\\d+")) {
 
                 try {
+
                     numbers.add(
-                            Integer.parseInt(text)
+                            Integer.parseInt(
+                                    text
+                            )
                     );
+
                 } catch (Exception ignored) {
                 }
             }
         }
 
-        /*
-         * Nelle righe ufficiali normalmente le prime due
-         * quotazioni sono quelle Classic.
-         */
         if (!numbers.isEmpty()) {
+
             return numbers.get(0);
         }
 
         return 0;
     }
 
-    private int extractFvm(Element row) {
+    private int extractFvm(
+            Element row
+    ) {
 
         if (row == null) {
             return 0;
         }
 
-        Elements cells = row.select("td");
+        Elements cells =
+                row.select("td");
 
         ArrayList<Integer> numbers =
                 new ArrayList<>();
 
-        for (Element cell : cells) {
+        for (Element cell :
+                cells) {
 
-            String text = cell.text().trim();
+            String text =
+                    cell.text().trim();
 
             if (text.matches("\\d+")) {
 
                 try {
+
                     numbers.add(
-                            Integer.parseInt(text)
+                            Integer.parseInt(
+                                    text
+                            )
                     );
+
                 } catch (Exception ignored) {
                 }
             }
         }
 
-        /*
-         * In caso di struttura classica:
-         *
-         * QI Classic
-         * QA Classic
-         * FVM Classic
-         * QI Mantra
-         * QA Mantra
-         * FVM Mantra
-         *
-         * Il terzo numero è quindi il FVM Classic.
-         */
         if (numbers.size() >= 3) {
+
             return numbers.get(2);
         }
 
         return 0;
     }
 
-    /*
-     * ============================================================
-     * PROBABILI FORMAZIONI FANTACALCIO
-     * ============================================================
-     */
-
     private Map<String, ProbabilityInfo>
     parseFantacalcioProbabili(
             String html
     ) {
 
-        Map<String, ProbabilityInfo> result =
+        Map<String, ProbabilityInfo>
+                result =
                 new HashMap<>();
 
-        Document document = Jsoup.parse(html);
+        Document document =
+                Jsoup.parse(html);
 
-        /*
-         * Cerchiamo i blocchi delle squadre.
-         *
-         * La pagina ufficiale mostra:
-         *
-         * squadra
-         * modulo
-         * giocatore
-         * percentuale
-         *
-         * quindi analizziamo le sezioni squadra per squadra.
-         */
         Elements headings =
-                document.select("h2, h3");
+                document.select(
+                        "h2, h3"
+                );
 
         String currentTeam = "";
 
-        for (Element heading : headings) {
+        for (Element heading :
+                headings) {
 
             String headingText =
                     heading.text().trim();
 
-            if (isSerieATeam(headingText)) {
+            if (isSerieATeam(
+                    headingText
+            )) {
+
                 currentTeam =
                         headingText;
             }
 
-            if (!isSerieATeam(headingText)) {
+            if (!isSerieATeam(
+                    headingText
+            )) {
+
                 continue;
             }
 
@@ -834,10 +996,13 @@ public class MainActivity extends Activity {
                             "a[href*='/serie-a/squadre/']"
                     );
 
-            for (Element playerLink : playerLinks) {
+            for (Element playerLink :
+                    playerLinks) {
 
                 String name =
-                        cleanName(playerLink.text());
+                        cleanName(
+                                playerLink.text()
+                        );
 
                 if (name.isEmpty()) {
                     continue;
@@ -853,7 +1018,8 @@ public class MainActivity extends Activity {
                                 playerLink
                         );
 
-                boolean starter = !bench;
+                boolean starter =
+                        !bench;
 
                 String key =
                         normalize(name);
@@ -861,19 +1027,19 @@ public class MainActivity extends Activity {
                 ProbabilityInfo info =
                         result.get(key);
 
-                /*
-                 * Se lo stesso giocatore appare più volte,
-                 * conserviamo il valore più alto.
-                 */
                 if (info == null) {
 
                     info =
                             new ProbabilityInfo();
 
-                    result.put(key, info);
+                    result.put(
+                            key,
+                            info
+                    );
                 }
 
-                if (probability > info.percentage) {
+                if (probability >
+                        info.percentage) {
 
                     info.percentage =
                             probability;
@@ -890,13 +1056,6 @@ public class MainActivity extends Activity {
             }
         }
 
-        /*
-         * Fallback: la pagina potrebbe avere una struttura diversa
-         * a seconda degli aggiornamenti del sito.
-         *
-         * In quel caso cerchiamo tutti i link e la percentuale
-         * immediatamente successiva.
-         */
         if (result.isEmpty()) {
 
             Elements playerLinks =
@@ -904,17 +1063,22 @@ public class MainActivity extends Activity {
                             "a[href*='/serie-a/squadre/']"
                     );
 
-            for (Element link : playerLinks) {
+            for (Element link :
+                    playerLinks) {
 
                 String name =
-                        cleanName(link.text());
+                        cleanName(
+                                link.text()
+                        );
 
                 if (name.isEmpty()) {
                     continue;
                 }
 
                 int probability =
-                        findProbabilityAfter(link);
+                        findProbabilityAfter(
+                                link
+                        );
 
                 if (probability <= 0) {
                     continue;
@@ -994,9 +1158,6 @@ public class MainActivity extends Activity {
             counter++;
         }
 
-        /*
-         * Secondo tentativo: stesso parent.
-         */
         Element parent =
                 playerLink.parent();
 
@@ -1006,7 +1167,9 @@ public class MainActivity extends Activity {
                     parent.text();
 
             int probability =
-                    parsePercentage(text);
+                    parsePercentage(
+                            text
+                    );
 
             if (probability >= 0) {
                 return probability;
@@ -1016,20 +1179,30 @@ public class MainActivity extends Activity {
         return 0;
     }
 
-    private int parsePercentage(String text) {
+    private int parsePercentage(
+            String text
+    ) {
 
         if (text == null) {
             return -1;
         }
 
-        text = text.trim();
+        text =
+                text.trim();
 
-        if (text.matches("\\d{1,3}%")) {
+        if (text.matches(
+                "\\d{1,3}%"
+        )) {
 
             try {
+
                 return Integer.parseInt(
-                        text.replace("%", "")
+                        text.replace(
+                                "%",
+                                ""
+                        )
                 );
+
             } catch (Exception ignored) {
             }
         }
@@ -1041,17 +1214,25 @@ public class MainActivity extends Activity {
             Element element
     ) {
 
-        Element current = element;
+        Element current =
+                element;
 
-        for (int i = 0; i < 8 && current != null; i++) {
+        for (int i = 0;
+             i < 8 && current != null;
+             i++) {
 
             String text =
-                    current.text().toLowerCase(
-                            Locale.ROOT
-                    );
+                    current.text()
+                            .toLowerCase(
+                                    Locale.ROOT
+                            );
 
-            if (text.startsWith("panchina") ||
-                    text.contains("panchina")) {
+            if (text.startsWith(
+                    "panchina"
+            ) ||
+                    text.contains(
+                            "panchina"
+                    )) {
 
                 return true;
             }
@@ -1063,19 +1244,18 @@ public class MainActivity extends Activity {
         return false;
     }
 
-    /*
-     * ============================================================
-     * GAZZETTA / SKY
-     * ============================================================
-     */
-
     private Map<String, Integer>
-    parseExternalSource(String html) {
+    parseExternalSource(
+            String html
+    ) {
 
-        Map<String, Integer> result =
+        Map<String, Integer>
+                result =
                 new HashMap<>();
 
-        if (html == null || html.isEmpty()) {
+        if (html == null ||
+                html.isEmpty()) {
+
             return result;
         }
 
@@ -1085,12 +1265,8 @@ public class MainActivity extends Activity {
         String text =
                 document.text();
 
-        /*
-         * Non usiamo il testo esterno per determinare il ruolo.
-         * Serve esclusivamente come conferma che il giocatore
-         * è presente nelle probabili.
-         */
-        for (String[] row : formazione) {
+        for (String[] row :
+                formazione) {
 
             if (row.length < 2) {
                 continue;
@@ -1139,12 +1315,6 @@ public class MainActivity extends Activity {
         return a.contains(b);
     }
 
-    /*
-     * ============================================================
-     * COSTRUZIONE ROSA
-     * ============================================================
-     */
-
     private ArrayList<Player> buildPlayers(
             Map<String, OfficialPlayer> official,
             Map<String, ProbabilityInfo> probabilities,
@@ -1155,7 +1325,8 @@ public class MainActivity extends Activity {
         ArrayList<Player> result =
                 new ArrayList<>();
 
-        for (String[] row : formazione) {
+        for (String[] row :
+                formazione) {
 
             if (row.length < 2) {
                 continue;
@@ -1166,6 +1337,7 @@ public class MainActivity extends Activity {
 
             if (excelName == null ||
                     excelName.trim().isEmpty()) {
+
                 continue;
             }
 
@@ -1177,9 +1349,6 @@ public class MainActivity extends Activity {
 
             if (officialPlayer == null) {
 
-                /*
-                 * Non inventiamo ruolo.
-                 */
                 Player player =
                         new Player(
                                 excelName,
@@ -1226,11 +1395,17 @@ public class MainActivity extends Activity {
                             officialPlayer.name
                     );
 
-            if (gazzetta.containsKey(normalized)) {
+            if (gazzetta.containsKey(
+                    normalized
+            )) {
+
                 externalAgreement++;
             }
 
-            if (sky.containsKey(normalized)) {
+            if (sky.containsKey(
+                    normalized
+            )) {
+
                 externalAgreement++;
             }
 
@@ -1269,21 +1444,15 @@ public class MainActivity extends Activity {
             return exact;
         }
 
-        /*
-         * Matching più tollerante per casi come:
-         *
-         * Martinez Jo.
-         * Josep Martinez
-         *
-         * oppure accenti/punteggiatura.
-         */
-        for (Map.Entry<String, OfficialPlayer> entry :
+        for (Map.Entry<String,
+                OfficialPlayer> entry :
                 official.entrySet()) {
 
             if (similarNames(
                     normalized,
                     entry.getKey()
             )) {
+
                 return entry.getValue();
             }
         }
@@ -1302,30 +1471,40 @@ public class MainActivity extends Activity {
 
         if (a.contains(b) ||
                 b.contains(a)) {
+
             return true;
         }
 
-        String[] aa = a.split(" ");
-        String[] bb = b.split(" ");
+        String[] aa =
+                a.split(" ");
+
+        String[] bb =
+                b.split(" ");
 
         if (aa.length >= 2 &&
                 bb.length >= 2) {
 
-            String firstA = aa[0];
+            String firstA =
+                    aa[0];
+
             String lastA =
                     aa[aa.length - 1];
 
-            String firstB = bb[0];
+            String firstB =
+                    bb[0];
+
             String lastB =
                     bb[bb.length - 1];
 
             if (firstA.equals(firstB) &&
                     lastA.equals(lastB)) {
+
                 return true;
             }
 
             if (firstA.equals(lastB) &&
                     lastA.equals(firstB)) {
+
                 return true;
             }
         }
@@ -1333,15 +1512,10 @@ public class MainActivity extends Activity {
         return false;
     }
 
-    /*
-     * ============================================================
-     * OTTIMIZZAZIONE FORMAZIONE
-     * ============================================================
-     */
-
     private static class FormationResult {
 
         String module;
+
         ArrayList<Player> goalkeeper =
                 new ArrayList<>();
 
@@ -1363,16 +1537,11 @@ public class MainActivity extends Activity {
             ArrayList<Player> players
     ) {
 
-        FormationResult best = null;
+        FormationResult best =
+                null;
 
         for (String module :
-                Arrays.asList(
-                        "3-4-3",
-                        "4-4-2",
-                        "3-5-2",
-                        "4-5-1",
-                        "5-4-1"
-                )) {
+                ALLOWED_FORMATIONS) {
 
             FormationResult result =
                     calculateFormation(
@@ -1385,7 +1554,8 @@ public class MainActivity extends Activity {
             }
 
             if (best == null ||
-                    result.score > best.score) {
+                    result.score >
+                            best.score) {
 
                 best = result;
             }
@@ -1396,8 +1566,11 @@ public class MainActivity extends Activity {
             FormationResult empty =
                     new FormationResult();
 
-            empty.module = "NESSUNA";
-            empty.valid = false;
+            empty.module =
+                    "NESSUNA";
+
+            empty.valid =
+                    false;
 
             return empty;
         }
@@ -1413,46 +1586,80 @@ public class MainActivity extends Activity {
         FormationResult result =
                 new FormationResult();
 
-        result.module = module;
+        result.module =
+                module;
 
         String[] parts =
                 module.split("-");
 
         int defenders =
-                Integer.parseInt(parts[0]);
+                Integer.parseInt(
+                        parts[0]
+                );
 
         int midfielders =
-                Integer.parseInt(parts[1]);
+                Integer.parseInt(
+                        parts[1]
+                );
 
         int attackers =
-                Integer.parseInt(parts[2]);
+                Integer.parseInt(
+                        parts[2]
+                );
 
         List<Player> goalkeepers =
-                playersForRole(players, "P");
+                playersForRole(
+                        players,
+                        "P"
+                );
 
         List<Player> defenderList =
-                playersForRole(players, "D");
+                playersForRole(
+                        players,
+                        "D"
+                );
 
         List<Player> midfielderList =
-                playersForRole(players, "C");
+                playersForRole(
+                        players,
+                        "C"
+                );
 
         List<Player> attackerList =
-                playersForRole(players, "A");
+                playersForRole(
+                        players,
+                        "A"
+                );
 
         if (goalkeepers.isEmpty() ||
-                defenderList.size() < defenders ||
-                midfielderList.size() < midfielders ||
-                attackerList.size() < attackers) {
+                defenderList.size() <
+                        defenders ||
+                midfielderList.size() <
+                        midfielders ||
+                attackerList.size() <
+                        attackers) {
 
-            result.valid = false;
+            result.valid =
+                    false;
 
             return result;
         }
 
-        sortByScore(goalkeepers);
-        sortByScore(defenderList);
-        sortByScore(midfielderList);
-        sortByScore(attackerList);
+        sortByScore(
+                goalkeepers
+        );
+
+        sortByScore(
+                defenderList
+        );
+
+        sortByScore(
+                midfielderList
+        );
+
+        sortByScore(
+                attackerList
+        );
 
         result.goalkeeper.add(
                 goalkeepers.get(0)
@@ -1483,25 +1690,34 @@ public class MainActivity extends Activity {
 
         for (Player p :
                 result.goalkeeper) {
-            result.score += p.score;
+
+            result.score +=
+                    p.score;
         }
 
         for (Player p :
                 result.defenders) {
-            result.score += p.score;
+
+            result.score +=
+                    p.score;
         }
 
         for (Player p :
                 result.midfielders) {
-            result.score += p.score;
+
+            result.score +=
+                    p.score;
         }
 
         for (Player p :
                 result.attackers) {
-            result.score += p.score;
+
+            result.score +=
+                    p.score;
         }
 
-        result.valid = true;
+        result.valid =
+                true;
 
         return result;
     }
@@ -1514,9 +1730,13 @@ public class MainActivity extends Activity {
         ArrayList<Player> result =
                 new ArrayList<>();
 
-        for (Player player : players) {
+        for (Player player :
+                players) {
 
-            if (role.equals(player.role)) {
+            if (role.equals(
+                    player.role
+            )) {
+
                 result.add(player);
             }
         }
@@ -1538,12 +1758,6 @@ public class MainActivity extends Activity {
         );
     }
 
-    /*
-     * ============================================================
-     * RISULTATO
-     * ============================================================
-     */
-
     private void displayResult(
             ArrayList<Player> players,
             FormationResult best
@@ -1552,55 +1766,86 @@ public class MainActivity extends Activity {
         StringBuilder sb =
                 new StringBuilder();
 
-        sb.append("ANALISI COMPLETATA\n");
-        sb.append("==================\n\n");
+        sb.append(
+                "ANALISI COMPLETATA\n"
+        );
 
-        sb.append("RUOLI CLASSIC RILEVATI\n\n");
+        sb.append(
+                "==================\n\n"
+        );
 
-        for (Player player : players) {
+        sb.append(
+                "RUOLI CLASSIC RILEVATI\n\n"
+        );
 
-            sb.append(player.excelName)
-                    .append(" → ");
+        for (Player player :
+                players) {
+
+            sb.append(
+                    player.excelName
+            ).append(
+                    " → "
+            );
 
             if (player.role.isEmpty()) {
 
-                sb.append("RUOLO NON DETERMINATO");
+                sb.append(
+                        "RUOLO NON DETERMINATO"
+                );
 
             } else {
 
-                sb.append(roleName(
-                        player.role
-                ));
+                sb.append(
+                        roleName(
+                                player.role
+                        )
+                );
             }
 
             sb.append("\n");
 
             if (!player.officialName
-                    .equals(player.excelName)) {
+                    .equals(
+                            player.excelName
+                    )) {
 
-                sb.append("   Nome ufficiale: ")
-                        .append(player.officialName)
-                        .append("\n");
+                sb.append(
+                        "   Nome ufficiale: "
+                ).append(
+                        player.officialName
+                ).append("\n");
             }
 
             if (!player.team.isEmpty()) {
 
-                sb.append("   Squadra: ")
-                        .append(player.team)
-                        .append("\n");
+                sb.append(
+                        "   Squadra: "
+                ).append(
+                        player.team
+                ).append("\n");
             }
 
-            sb.append("   Probabile: ")
-                    .append(player.probable)
-                    .append("%\n");
+            sb.append(
+                    "   Probabile: "
+            ).append(
+                    player.probable
+            ).append(
+                    "%\n"
+            );
 
-            sb.append("   FVM: ")
-                    .append(player.fvm)
-                    .append("\n");
+            sb.append(
+                    "   FVM: "
+            ).append(
+                    player.fvm
+            ).append("\n");
 
-            sb.append("   Conferme Gazzetta/Sky: ")
-                    .append(player.externalAgreement)
-                    .append("/2\n\n");
+            sb.append(
+                    "   Conferme Gazzetta/Sky: "
+            ).append(
+                    player.externalAgreement
+            ).append(
+                    "/2\n\n"
+            );
         }
 
         sb.append("\n");
@@ -1613,34 +1858,48 @@ public class MainActivity extends Activity {
             );
 
             sb.append(
-                    "Probabilmente uno o più ruoli Classic " +
-                    "non sono stati riconosciuti dal Listone."
+                    "Uno o più ruoli Classic " +
+                    "non sono stati riconosciuti."
             );
 
-            resultText.setText(sb.toString());
+            resultText.setText(
+                    sb.toString()
+            );
 
             return;
         }
 
-        sb.append("================================\n");
-        sb.append("FORMAZIONE OTTIMALE\n");
-        sb.append("================================\n\n");
+        sb.append(
+                "================================\n"
+        );
 
-        sb.append("MODULO: ")
-                .append(best.module)
-                .append("\n");
+        sb.append(
+                "FORMAZIONE OTTIMALE\n"
+        );
 
-        sb.append("PUNTEGGIO: ")
-                .append(
-                        String.format(
-                                Locale.US,
-                                "%.1f",
-                                best.score
-                        )
+        sb.append(
+                "================================\n\n"
+        );
+
+        sb.append(
+                "MODULO: "
+        ).append(
+                best.module
+        ).append("\n");
+
+        sb.append(
+                "PUNTEGGIO: "
+        ).append(
+                String.format(
+                        Locale.US,
+                        "%.1f",
+                        best.score
                 )
-                .append("\n\n");
+        ).append("\n\n");
 
-        sb.append("PORTIERE\n");
+        sb.append(
+                "PORTIERE\n"
+        );
 
         for (Player p :
                 best.goalkeeper) {
@@ -1651,7 +1910,9 @@ public class MainActivity extends Activity {
             );
         }
 
-        sb.append("\nDIFENSORI\n");
+        sb.append(
+                "\nDIFENSORI\n"
+        );
 
         for (Player p :
                 best.defenders) {
@@ -1662,7 +1923,9 @@ public class MainActivity extends Activity {
             );
         }
 
-        sb.append("\nCENTROCAMPISTI\n");
+        sb.append(
+                "\nCENTROCAMPISTI\n"
+        );
 
         for (Player p :
                 best.midfielders) {
@@ -1673,7 +1936,9 @@ public class MainActivity extends Activity {
             );
         }
 
-        sb.append("\nATTACCANTI\n");
+        sb.append(
+                "\nATTACCANTI\n"
+        );
 
         for (Player p :
                 best.attackers) {
@@ -1684,9 +1949,17 @@ public class MainActivity extends Activity {
             );
         }
 
-        sb.append("\n\n================================\n");
-        sb.append("MODULI ANALIZZATI\n");
-        sb.append("================================\n");
+        sb.append(
+                "\n\n================================\n"
+        );
+
+        sb.append(
+                "MODULI ANALIZZATI\n"
+        );
+
+        sb.append(
+                "================================\n"
+        );
 
         sb.append(
                 "3-4-3\n" +
@@ -1696,7 +1969,9 @@ public class MainActivity extends Activity {
                 "5-4-1\n"
         );
 
-        resultText.setText(sb.toString());
+        resultText.setText(
+                sb.toString()
+        );
     }
 
     private void appendSelectedPlayer(
@@ -1705,9 +1980,13 @@ public class MainActivity extends Activity {
     ) {
 
         sb.append("• ")
-                .append(p.excelName)
+                .append(
+                        p.excelName
+                )
                 .append("  ")
-                .append(p.probable)
+                .append(
+                        p.probable
+                )
                 .append("%");
 
         if (p.externalAgreement > 0) {
@@ -1752,12 +2031,6 @@ public class MainActivity extends Activity {
         }
     }
 
-    /*
-     * ============================================================
-     * UTILITY
-     * ============================================================
-     */
-
     private String cleanName(
             String text
     ) {
@@ -1767,8 +2040,14 @@ public class MainActivity extends Activity {
         }
 
         return text
-                .replace("\u00a0", " ")
-                .replaceAll("\\s+", " ")
+                .replace(
+                        "\u00a0",
+                        " "
+                )
+                .replaceAll(
+                        "\\s+",
+                        " "
+                )
                 .trim();
     }
 
@@ -1843,9 +2122,13 @@ public class MainActivity extends Activity {
                 "frosinone"
         };
 
-        for (String team : teams) {
+        for (String team :
+                teams) {
 
-            if (normalized.equals(team)) {
+            if (normalized.equals(
+                    team
+            )) {
+
                 return true;
             }
         }
