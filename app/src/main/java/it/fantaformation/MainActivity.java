@@ -40,7 +40,7 @@ public class MainActivity extends Activity {
     private LinearLayout root;
     private TextView resultText;
 
-    private ArrayList<String[]> formazione;
+    private List<String[]> formazione;
 
     private final ExecutorService executor =
             Executors.newSingleThreadExecutor();
