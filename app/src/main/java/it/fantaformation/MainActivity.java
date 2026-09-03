@@ -4,106 +4,73 @@ import android.app.Activity;
 import android.os.Bundle;
 import android.content.Intent;
 import android.net.Uri;
-import android.graphics.Typeface;
-import android.view.Gravity;
+import android.provider.Settings;
+import android.view.View;
 import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import org.jsoup.Jsoup;
+import org.jsoup.nodes.Document;
+import org.jsoup.nodes.Element;
+import org.jsoup.select.Elements;
+
 import java.io.BufferedReader;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.text.Normalizer;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 public class MainActivity extends Activity {
 
-    private static final int PICK_XLSX = 1001;
-
+    private LinearLayout root;
     private TextView resultText;
 
-    private List<String[]> currentPlayers =
-            new ArrayList<>();
+    private ArrayList<String[]> formazione;
+    private final ExecutorService executor = Executors.newSingleThreadExecutor();
 
-    private final ExecutorService executor =
-            Executors.newSingleThreadExecutor();
+    private static final String FANTACALCIO_QUOTE =
+            "https://www.fantacalcio.it/quotazioni-fantacalcio/2026-27";
 
-    /*
-     * Moduli consentiti.
-     */
-    private static final String[] MODULES = {
-            "3-4-3",
-            "4-4-2",
-            "3-5-2",
-            "4-5-1",
-            "5-4-1"
-    };
+    private static final String FANTACALCIO_PROBABILI =
+            "https://www.fantacalcio.it/probabili-formazioni-serie-a";
 
-    /*
-     * Dati online raccolti per ciascun giocatore.
-     */
-    private static class PlayerInfo {
+    private static final String FANTACALCIO_STATS =
+            "https://www.fantacalcio.it/statistiche-serie-a/2026-27/fantacalcio/riepilogo";
 
-        String name;
+    private static final String GAZZETTA_PROBABILI =
+            "https://www.gazzetta.it/Calcio/prob_form/";
 
-        String role = "";
+    private static final String SKY_PROBABILI =
+            "https://sport.sky.it/calcio/serie-a/probabili-formazioni";
 
-        double starterProbability = 0;
-
-        double fantasyScore = 0;
-
-        boolean injured = false;
-
-        boolean suspended = false;
-
-        boolean doubtful = false;
-
-        boolean foundOnline = false;
-
-        PlayerInfo(String name) {
-            this.name = name;
-        }
-    }
-
-    /*
-     * Una formazione candidata.
-     */
-    private static class Formation {
-
-        String module;
-
-        List<PlayerInfo> goalkeepers =
-                new ArrayList<>();
-
-        List<PlayerInfo> defenders =
-                new ArrayList<>();
-
-        List<PlayerInfo> midfielders =
-                new ArrayList<>();
-
-        List<PlayerInfo> attackers =
-                new ArrayList<>();
-
-        double score;
-    }
+    private static final Set<String> ALLOWED_FORMATIONS =
+            new HashSet<>(Arrays.asList(
+                    "3-4-3",
+                    "4-4-2",
+                    "3-5-2",
+                    "4-5-1",
+                    "5-4-1"
+            ));
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
-
         super.onCreate(savedInstanceState);
 
         buildInterface();
@@ -111,976 +78,1254 @@ public class MainActivity extends Activity {
 
     private void buildInterface() {
 
-        LinearLayout layout =
-                new LinearLayout(this);
+        ScrollView scroll = new ScrollView(this);
 
-        layout.setOrientation(
-                LinearLayout.VERTICAL
-        );
+        root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(35, 35, 35, 35);
 
-        layout.setPadding(
-                30,
-                30,
-                30,
-                30
-        );
-
-        TextView title =
-                new TextView(this);
-
-        title.setText(
-                "FantaFormation"
-        );
-
+        TextView title = new TextView(this);
+        title.setText("FantaFormation");
         title.setTextSize(28);
+        title.setPadding(0, 0, 0, 20);
 
-        title.setTypeface(
-                null,
-                Typeface.BOLD
-        );
+        root.addView(title);
 
-        title.setGravity(
-                Gravity.CENTER
-        );
-
-        layout.addView(title);
-
-        TextView description =
-                new TextView(this);
-
+        TextView description = new TextView(this);
         description.setText(
-                "\nCarica il tuo Excel.\n\n" +
-                "L'app legge i 25 giocatori di One Pisa " +
-                "e cerca online ruolo, titolarità, " +
-                "rendimento e indisponibilità.\n\n" +
-                "Moduli analizzati:\n" +
-                "3-4-3 • 4-4-2 • 3-5-2 • 4-5-1 • 5-4-1\n"
+                "Carica la rosa One Pisa dal file Excel. " +
+                "L'app recupera i ruoli Classic ufficiali e analizza le probabili formazioni."
         );
-
         description.setTextSize(16);
+        description.setPadding(0, 0, 0, 25);
 
-        layout.addView(description);
+        root.addView(description);
 
-        Button loadButton =
-                new Button(this);
+        Button loadButton = new Button(this);
+        loadButton.setText("CARICA FORMAZIONE EXCEL");
+        root.addView(loadButton);
 
-        loadButton.setText(
-                "CARICA FORMAZIONE EXCEL"
-        );
+        Button automateButton = new Button(this);
+        automateButton.setText("ANALIZZA E OTTIMIZZA FORMAZIONE");
+        root.addView(automateButton);
 
-        layout.addView(loadButton);
+        Button openButton = new Button(this);
+        openButton.setText("APRI FANTACALCIO");
+        root.addView(openButton);
 
-        Button automateButton =
-                new Button(this);
+        resultText = new TextView(this);
+        resultText.setTextSize(15);
+        resultText.setPadding(0, 30, 0, 30);
 
-        automateButton.setText(
-                "AUTOMATIZZA FORMAZIONE"
-        );
+        root.addView(resultText);
 
-        layout.addView(automateButton);
+        scroll.addView(root);
+        setContentView(scroll);
 
-        Button fantacalcioButton =
-                new Button(this);
+        loadButton.setOnClickListener(v -> chooseExcel());
 
-        fantacalcioButton.setText(
-                "APRI FANTACALCIO"
-        );
+        automateButton.setOnClickListener(v -> {
+            if (formazione == null || formazione.isEmpty()) {
+                Toast.makeText(
+                        MainActivity.this,
+                        "Prima carica la formazione Excel",
+                        Toast.LENGTH_LONG
+                ).show();
+                return;
+            }
 
-        layout.addView(
-                fantacalcioButton
-        );
+            analyzeFormation();
+        });
 
-        resultText =
-                new TextView(this);
+        openButton.setOnClickListener(v -> {
 
-        resultText.setTextSize(16);
+            Intent intent = new Intent(
+                    Intent.ACTION_VIEW,
+                    Uri.parse("https://leghe.fantacalcio.it/")
+            );
 
-        resultText.setPadding(
-                0,
-                30,
-                0,
-                20
-        );
-
-        ScrollView scroll =
-                new ScrollView(this);
-
-        scroll.addView(
-                resultText
-        );
-
-        layout.addView(
-                scroll,
-                new LinearLayout.LayoutParams(
-                        LinearLayout.LayoutParams.MATCH_PARENT,
-                        0,
-                        1
-                )
-        );
-
-        setContentView(layout);
-
-        loadButton.setOnClickListener(
-                v -> openFilePicker()
-        );
-
-        automateButton.setOnClickListener(
-                v -> startAutomation()
-        );
-
-        fantacalcioButton.setOnClickListener(
-                v -> openFantacalcio()
-        );
+            startActivity(intent);
+        });
     }
 
-    private void openFilePicker() {
+    private void chooseExcel() {
 
-        Intent intent =
-                new Intent(
-                        Intent.ACTION_OPEN_DOCUMENT
-                );
-
-        intent.addCategory(
-                Intent.CATEGORY_OPENABLE
-        );
-
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.setType(
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         );
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
 
-        startActivityForResult(
-                intent,
-                PICK_XLSX
-        );
+        startActivityForResult(intent, 100);
     }
 
-    private void openFantacalcio() {
+    @Override
+    protected void onActivityResult(
+            int requestCode,
+            int resultCode,
+            Intent data
+    ) {
+        super.onActivityResult(requestCode, resultCode, data);
 
-        Intent intent =
-                new Intent(
-                        Intent.ACTION_VIEW,
-                        Uri.parse(
-                                "https://leghe.fantacalcio.it/"
-                        )
-                );
-
-        startActivity(intent);
-    }
-
-    /*
-     * =========================================================
-     * AVVIO ANALISI
-     * =========================================================
-     */
-
-    private void startAutomation() {
-
-        if (currentPlayers.isEmpty()) {
-
-            Toast.makeText(
-                    this,
-                    "Prima carica il file Excel",
-                    Toast.LENGTH_LONG
-            ).show();
-
+        if (requestCode != 100 ||
+                resultCode != RESULT_OK ||
+                data == null ||
+                data.getData() == null) {
             return;
         }
 
-        resultText.setText(
-                "ANALISI IN CORSO...\n\n" +
-                "Sto cercando i tuoi giocatori online.\n" +
-                "Recupero ruoli, titolarità e rendimento.\n\n" +
-                "Attendi..."
-        );
+        Uri uri = data.getData();
 
         executor.execute(() -> {
 
             try {
 
-                List<PlayerInfo> players =
-                        createPlayerList(
-                                currentPlayers
-                        );
+                InputStream inputStream =
+                        getContentResolver().openInputStream(uri);
 
-                /*
-                 * 1. Dati ufficiali Fantacalcio.
-                 */
-                String statsPage =
-                        downloadPage(
-                                "https://www.fantacalcio.it/statistiche-serie-a"
-                        );
+                ArrayList<String[]> result =
+                        XlsxReader.read(inputStream);
 
-                /*
-                 * 2. Probabili formazioni Fantacalcio.
-                 */
-                String probablePage =
-                        downloadPage(
-                                "https://www.fantacalcio.it/probabili-formazioni-serie-a"
-                        );
+                runOnUiThread(() -> {
 
-                /*
-                 * 3. Quotazioni/FVM Fantacalcio.
-                 */
-                String quotationPage =
-                        downloadPage(
-                                "https://www.fantacalcio.it/quotazioni-fantacalcio"
-                        );
+                    formazione = result;
 
-                analyzeFantacalcioData(
-                        players,
-                        statsPage,
-                        probablePage,
-                        quotationPage
-                );
+                    StringBuilder sb = new StringBuilder();
 
-                /*
-                 * 4. Analisi delle cinque formazioni.
-                 */
-                Formation best =
-                        findBestFormation(
-                                players
-                        );
+                    sb.append("FORMAZIONE ONE PISA\n");
+                    sb.append("====================\n\n");
 
-                String result =
-                        buildFinalResult(
-                                players,
-                                best
-                        );
+                    for (String[] row : result) {
 
-                runOnUiThread(() ->
-                        resultText.setText(
-                                result
-                        )
-                );
+                        String player = row.length > 1 ? row[1] : "";
+                        String cost = row.length > 2 ? row[2] : "";
+
+                        sb.append(player);
+
+                        if (cost != null && !cost.trim().isEmpty()) {
+                            sb.append("  -  ").append(cost);
+                        }
+
+                        sb.append("\n");
+                    }
+
+                    sb.append("\nTotale giocatori: ")
+                            .append(result.size());
+
+                    resultText.setText(sb.toString());
+
+                    Toast.makeText(
+                            MainActivity.this,
+                            "Formazione caricata correttamente",
+                            Toast.LENGTH_SHORT
+                    ).show();
+                });
 
             } catch (Exception e) {
 
                 runOnUiThread(() ->
                         resultText.setText(
-                                "ERRORE DURANTE L'ANALISI\n\n" +
-                                e.getMessage() +
-                                "\n\n" +
-                                "Controlla la connessione internet."
+                                "Errore lettura Excel:\n" +
+                                e.getMessage()
                         )
                 );
             }
         });
     }
 
-    /*
-     * =========================================================
-     * CREAZIONE GIOCATORI
-     * =========================================================
-     */
+    private void analyzeFormation() {
 
-    private List<PlayerInfo> createPlayerList(
-            List<String[]> excelPlayers) {
+        resultText.setText(
+                "Analisi in corso...\n\n" +
+                "1. Recupero ruoli Classic ufficiali\n" +
+                "2. Recupero quotazioni/FVM\n" +
+                "3. Recupero probabili Fantacalcio\n" +
+                "4. Confronto Gazzetta\n" +
+                "5. Confronto Sky\n" +
+                "6. Calcolo delle 5 formazioni possibili\n"
+        );
 
-        List<PlayerInfo> result =
-                new ArrayList<>();
+        executor.execute(() -> {
 
-        for (String[] row :
-                excelPlayers) {
+            try {
 
-            if (row == null ||
-                    row.length < 2) {
-                continue;
+                String quotesHtml = download(FANTACALCIO_QUOTE);
+                String probabiliHtml = download(FANTACALCIO_PROBABILI);
+
+                String gazzettaHtml = download(GAZZETTA_PROBABILI);
+                String skyHtml = download(SKY_PROBABILI);
+
+                Map<String, OfficialPlayer> officialPlayers =
+                        parseOfficialPlayers(quotesHtml);
+
+                Map<String, ProbabilityInfo> probabilities =
+                        parseFantacalcioProbabili(probabiliHtml);
+
+                Map<String, Integer> gazzetta =
+                        parseExternalSource(gazzettaHtml);
+
+                Map<String, Integer> sky =
+                        parseExternalSource(skyHtml);
+
+                ArrayList<Player> players =
+                        buildPlayers(
+                                officialPlayers,
+                                probabilities,
+                                gazzetta,
+                                sky
+                        );
+
+                FormationResult best =
+                        calculateBestFormation(players);
+
+                runOnUiThread(() -> displayResult(
+                        players,
+                        best
+                ));
+
+            } catch (Exception e) {
+
+                runOnUiThread(() ->
+                        resultText.setText(
+                                "Errore durante l'analisi:\n\n" +
+                                e.getClass().getSimpleName() +
+                                "\n" +
+                                e.getMessage()
+                        )
+                );
             }
-
-            String name =
-                    row[1];
-
-            if (name == null ||
-                    name.trim().isEmpty()) {
-                continue;
-            }
-
-            result.add(
-                    new PlayerInfo(
-                            name.trim()
-                    )
-            );
-        }
-
-        return result;
+        });
     }
 
-    /*
-     * =========================================================
-     * DOWNLOAD PAGINA
-     * =========================================================
-     */
+    private String download(String address) throws Exception {
 
-    private String downloadPage(
-            String address) throws Exception {
-
-        URL url =
-                new URL(address);
+        URL url = new URL(address);
 
         HttpURLConnection connection =
-                (HttpURLConnection)
-                        url.openConnection();
+                (HttpURLConnection) url.openConnection();
 
-        connection.setRequestMethod(
-                "GET"
-        );
-
-        connection.setConnectTimeout(
-                20000
-        );
-
-        connection.setReadTimeout(
-                20000
-        );
+        connection.setRequestMethod("GET");
+        connection.setConnectTimeout(15000);
+        connection.setReadTimeout(20000);
 
         connection.setRequestProperty(
                 "User-Agent",
-                "Mozilla/5.0 (Linux; Android 13) " +
-                "AppleWebKit/537.36 " +
-                "Chrome/130.0 Mobile Safari/537.36"
+                "Mozilla/5.0 (Android) AppleWebKit/537.36"
         );
 
-        connection.setRequestProperty(
-                "Accept-Language",
-                "it-IT,it;q=0.9"
-        );
+        int code = connection.getResponseCode();
 
-        int responseCode =
-                connection.getResponseCode();
-
-        if (responseCode < 200 ||
-                responseCode >= 300) {
-
+        if (code < 200 || code >= 400) {
             throw new Exception(
-                    "Pagina non raggiungibile: " +
-                    responseCode +
-                    "\n" +
-                    address
+                    "HTTP " + code + " - " + address
             );
         }
 
-        InputStream input =
+        InputStream inputStream =
                 connection.getInputStream();
 
         BufferedReader reader =
                 new BufferedReader(
                         new InputStreamReader(
-                                input,
+                                inputStream,
                                 "UTF-8"
                         )
                 );
 
-        StringBuilder result =
-                new StringBuilder();
+        StringBuilder result = new StringBuilder();
 
         String line;
 
-        while ((line =
-                reader.readLine()) != null) {
-
-            result.append(
-                    line
-            ).append(
-                    "\n"
-            );
+        while ((line = reader.readLine()) != null) {
+            result.append(line).append('\n');
         }
 
         reader.close();
-
         connection.disconnect();
 
         return result.toString();
     }
 
     /*
-     * =========================================================
-     * ANALISI DATI
-     * =========================================================
+     * ============================================================
+     * PLAYER MODEL
+     * ============================================================
      */
 
-    private void analyzeFantacalcioData(
-            List<PlayerInfo> players,
-            String statsPage,
-            String probablePage,
-            String quotationPage) {
+    private static class OfficialPlayer {
 
-        String stats =
-                stripHtml(
-                        statsPage
-                );
+        String name = "";
+        String team = "";
+        String role = "";
+        int classicQuote = 0;
+        int fvm = 0;
+        String profileUrl = "";
+    }
 
-        String probable =
-                stripHtml(
-                        probablePage
-                );
+    private static class ProbabilityInfo {
 
-        String quotation =
-                stripHtml(
-                        quotationPage
-                );
+        int percentage = 0;
+        boolean starter = false;
+        boolean bench = false;
+        String team = "";
+    }
 
-        for (PlayerInfo player :
-                players) {
+    private static class Player {
 
-            String normalized =
-                    normalize(
-                            player.name
-                    );
+        String excelName;
+        String officialName;
+        String team;
+        String role;
 
-            if (normalized.isEmpty()) {
+        int quote;
+        int fvm;
+
+        int probable;
+        int externalAgreement;
+
+        boolean starter;
+        boolean bench;
+
+        double score;
+
+        Player(
+                String excelName,
+                String officialName,
+                String team,
+                String role,
+                int quote,
+                int fvm,
+                int probable,
+                int externalAgreement,
+                boolean starter,
+                boolean bench
+        ) {
+            this.excelName = excelName;
+            this.officialName = officialName;
+            this.team = team;
+            this.role = role;
+            this.quote = quote;
+            this.fvm = fvm;
+            this.probable = probable;
+            this.externalAgreement = externalAgreement;
+            this.starter = starter;
+            this.bench = bench;
+
+            calculateScore();
+        }
+
+        private void calculateScore() {
+
+            score = 0;
+
+            /*
+             * La probabilità di essere titolare è il fattore
+             * principale.
+             */
+            score += probable * 1.50;
+
+            /*
+             * Conferma da Gazzetta/Sky.
+             */
+            score += externalAgreement * 12.0;
+
+            /*
+             * FVM come indicatore di qualità.
+             * Lo teniamo volutamente meno importante della titolarità.
+             */
+            score += Math.min(fvm, 300) * 0.12;
+
+            /*
+             * Quotazione.
+             */
+            score += quote * 0.15;
+
+            if (starter) {
+                score += 20;
+            }
+
+            if (bench && !starter) {
+                score -= 12;
+            }
+
+            if (probable == 0) {
+                score -= 25;
+            }
+        }
+    }
+
+    /*
+     * ============================================================
+     * PARSING LISTONE UFFICIALE
+     * ============================================================
+     */
+
+    private Map<String, OfficialPlayer> parseOfficialPlayers(
+            String html
+    ) {
+
+        Map<String, OfficialPlayer> result =
+                new LinkedHashMap<>();
+
+        Document document = Jsoup.parse(html);
+
+        /*
+         * Il Listone ufficiale è una tabella.
+         * Cerchiamo le righe che contengono un link alla
+         * scheda del calciatore.
+         */
+        Elements links = document.select(
+                "a[href*='/serie-a/squadre/']"
+        );
+
+        for (Element link : links) {
+
+            String name = cleanName(link.text());
+
+            if (name.isEmpty()) {
                 continue;
             }
 
+            String href = link.absUrl("href");
+
+            if (href.isEmpty()) {
+                href = link.attr("href");
+            }
+
+            Element row = link.closest("tr");
+
+            if (row == null) {
+                row = link.parent();
+            }
+
+            String rowText = row != null
+                    ? row.text()
+                    : "";
+
+            OfficialPlayer player =
+                    new OfficialPlayer();
+
+            player.name = name;
+            player.profileUrl = href;
+
+            player.team = extractTeam(rowText);
+
+            player.classicQuote =
+                    extractClassicQuote(row);
+
+            player.fvm =
+                    extractFvm(row);
+
             /*
-             * Cerca il giocatore nelle statistiche.
+             * IMPORTANTE:
+             *
+             * Il ruolo viene cercato prima negli attributi e negli
+             * elementi direttamente associati al giocatore.
+             *
+             * Non facciamo più la vecchia ricerca "per vicinanza"
+             * di POR/DIF/CEN/ATT.
              */
-            int statsPosition =
-                    findPlayerPosition(
-                            stats,
-                            normalized
+            player.role =
+                    extractRoleFromPlayerElement(
+                            link,
+                            row
                     );
 
-            if (statsPosition >= 0) {
+            if (player.role.isEmpty()) {
 
-                player.foundOnline = true;
-
-                String context =
-                        getContext(
-                                stats,
-                                statsPosition,
-                                500
-                        );
-
+                /*
+                 * Secondo tentativo: attributi strutturati della riga.
+                 */
                 player.role =
-                        detectRole(
-                                context
-                        );
-
-                player.fantasyScore =
-                        detectFantasyScore(
-                                context
-                        );
+                        extractRoleFromAttributes(row);
             }
 
             /*
-             * Cerca nelle probabili formazioni.
+             * Evitiamo duplicati.
              */
-            int probablePosition =
-                    findPlayerPosition(
-                            probable,
-                            normalized
+            String key =
+                    normalize(player.name);
+
+            if (!result.containsKey(key)) {
+                result.put(key, player);
+            }
+        }
+
+        return result;
+    }
+
+    private String extractRoleFromPlayerElement(
+            Element link,
+            Element row
+    ) {
+
+        String[] attributes = {
+                "data-role",
+                "data-ruolo",
+                "role",
+                "title",
+                "aria-label",
+                "class"
+        };
+
+        for (String attribute : attributes) {
+
+            String value = link.attr(attribute);
+
+            String role = roleFromText(value);
+
+            if (!role.isEmpty()) {
+                return role;
+            }
+        }
+
+        if (row != null) {
+
+            Elements elements =
+                    row.select(
+                            "[data-role], " +
+                            "[data-ruolo], " +
+                            "[title], " +
+                            "[aria-label]"
                     );
 
-            if (probablePosition >= 0) {
+            for (Element element : elements) {
 
-                player.foundOnline = true;
+                for (String attribute : attributes) {
 
-                String context =
-                        getContext(
-                                probable,
-                                probablePosition,
-                                800
-                        );
+                    String value =
+                            element.attr(attribute);
 
-                double probability =
-                        detectProbability(
-                                context
-                        );
+                    String role =
+                            roleFromText(value);
 
-                if (probability > 0) {
-
-                    player.starterProbability =
-                            Math.max(
-                                    player.starterProbability,
-                                    probability
-                            );
-                }
-
-                String lower =
-                        context.toLowerCase(
-                                Locale.ITALIAN
-                        );
-
-                if (lower.contains(
-                        "infortun"
-                )) {
-
-                    player.injured = true;
-                }
-
-                if (lower.contains(
-                        "squalificat"
-                )) {
-
-                    player.suspended = true;
-                }
-
-                if (lower.contains(
-                        "in dubbio"
-                )) {
-
-                    player.doubtful = true;
+                    if (!role.isEmpty()) {
+                        return role;
+                    }
                 }
             }
-
-            /*
-             * Cerca anche nelle quotazioni.
-             */
-            int quotationPosition =
-                    findPlayerPosition(
-                            quotation,
-                            normalized
-                    );
-
-            if (quotationPosition >= 0) {
-
-                player.foundOnline = true;
-
-                String context =
-                        getContext(
-                                quotation,
-                                quotationPosition,
-                                500
-                        );
-
-                if (player.role.isEmpty()) {
-
-                    player.role =
-                            detectRole(
-                                    context
-                            );
-                }
-
-                double score =
-                        detectFvm(
-                                context
-                        );
-
-                if (score > 0 &&
-                        player.fantasyScore == 0) {
-
-                    player.fantasyScore =
-                            score;
-                }
-            }
-
-            /*
-             * Se il giocatore non ha probabilità,
-             * ma compare nelle probabili formazioni,
-             * gli assegniamo una probabilità minima.
-             */
-            if (probablePosition >= 0 &&
-                    player.starterProbability == 0) {
-
-                player.starterProbability =
-                        50;
-            }
-        }
-    }
-
-    /*
-     * =========================================================
-     * RICERCA NOME
-     * =========================================================
-     */
-
-    private int findPlayerPosition(
-            String text,
-            String normalizedName) {
-
-        if (text == null ||
-                normalizedName == null ||
-                normalizedName.isEmpty()) {
-
-            return -1;
-        }
-
-        /*
-         * Prima prova la ricerca normale.
-         */
-        String normalizedText =
-                normalize(text);
-
-        return normalizedText.indexOf(
-                normalizedName
-        );
-    }
-
-    /*
-     * =========================================================
-     * CONTESTO
-     * =========================================================
-     */
-
-    private String getContext(
-            String text,
-            int position,
-            int length) {
-
-        if (position < 0) {
-            return "";
-        }
-
-        int start =
-                Math.max(
-                        0,
-                        position - 250
-                );
-
-        int end =
-                Math.min(
-                        text.length(),
-                        position + length
-                );
-
-        return text.substring(
-                start,
-                end
-        );
-    }
-
-    /*
-     * =========================================================
-     * RUOLO CLASSIC
-     * =========================================================
-     */
-
-    private String detectRole(
-            String context) {
-
-        String lower =
-                context.toLowerCase(
-                        Locale.ITALIAN
-                );
-
-        /*
-         * Prima controlliamo le abbreviazioni.
-         */
-        if (containsAny(
-                lower,
-                "por",
-                "portiere",
-                "portieri"
-        )) {
-
-            return "POR";
-        }
-
-        if (containsAny(
-                lower,
-                "dif",
-                "difensore",
-                "difensori"
-        )) {
-
-            return "DIF";
-        }
-
-        if (containsAny(
-                lower,
-                "cen",
-                "centrocampista",
-                "centrocampisti"
-        )) {
-
-            return "CEN";
-        }
-
-        if (containsAny(
-                lower,
-                "att",
-                "attaccante",
-                "attaccanti"
-        )) {
-
-            return "ATT";
-        }
-
-        /*
-         * Alcune pagine possono usare i ruoli
-         * per esteso.
-         */
-        if (lower.contains("portiere")) {
-            return "POR";
-        }
-
-        if (lower.contains("difensore")) {
-            return "DIF";
-        }
-
-        if (lower.contains("centrocampista")) {
-            return "CEN";
-        }
-
-        if (lower.contains("attaccante")) {
-            return "ATT";
         }
 
         return "";
     }
 
-    /*
-     * =========================================================
-     * PROBABILITA' TITOLARITA'
-     * =========================================================
-     */
+    private String extractRoleFromAttributes(
+            Element row
+    ) {
 
-    private double detectProbability(
-            String context) {
-
-        Pattern pattern =
-                Pattern.compile(
-                        "(\\d{1,3})\\s*%"
-                );
-
-        Matcher matcher =
-                pattern.matcher(
-                        context
-                );
-
-        double best = 0;
-
-        while (matcher.find()) {
-
-            try {
-
-                double value =
-                        Double.parseDouble(
-                                matcher.group(1)
-                        );
-
-                if (value >= 1 &&
-                        value <= 100) {
-
-                    best =
-                            Math.max(
-                                    best,
-                                    value
-                            );
-                }
-
-            } catch (Exception ignored) {
-            }
+        if (row == null) {
+            return "";
         }
 
-        return best;
+        String html = row.outerHtml();
+
+        return roleFromText(html);
     }
 
-    /*
-     * =========================================================
-     * FANTAVOTO
-     * =========================================================
-     */
+    private String roleFromText(String text) {
 
-    private double detectFantasyScore(
-            String context) {
+        if (text == null) {
+            return "";
+        }
+
+        String normalized =
+                normalize(text);
 
         /*
-         * Cerca valori tipo:
-         *
-         * FM 8,50
-         * FantaVoto 8,50
+         * Cerchiamo solamente indicatori espliciti.
+         * Non prendiamo una parola casuale dal testo della pagina.
          */
-        Pattern pattern =
-                Pattern.compile(
-                        "(?:FM|FantaVoto|FantaVoto\\s*)\\s*" +
-                        "([0-9]+[\\.,][0-9]+)"
-                );
 
-        Matcher matcher =
-                pattern.matcher(
-                        context
-                );
+        if (normalized.contains("portiere") ||
+                normalized.matches(".*\\bp\\b.*")) {
+            return "P";
+        }
 
-        double best = 0;
+        if (normalized.contains("difensore") ||
+                normalized.matches(".*\\bd\\b.*")) {
+            return "D";
+        }
 
-        while (matcher.find()) {
+        if (normalized.contains("centrocampista") ||
+                normalized.matches(".*\\bc\\b.*")) {
+            return "C";
+        }
 
-            try {
+        if (normalized.contains("attaccante") ||
+                normalized.matches(".*\\ba\\b.*")) {
+            return "A";
+        }
 
-                double value =
-                        Double.parseDouble(
-                                matcher.group(1)
-                                        .replace(
-                                                ",",
-                                                "."
-                                        )
-                        );
+        return "";
+    }
 
-                if (value > best) {
-                    best = value;
+    private String extractTeam(String text) {
+
+        if (text == null) {
+            return "";
+        }
+
+        String upper =
+                text.toUpperCase(Locale.ROOT);
+
+        String[] teams = {
+                "INT", "COM", "MIL", "ROM", "NAP",
+                "JUV", "ATA", "BOL", "LAZ", "FIO",
+                "PAR", "GEN", "MON", "TOR", "UDI",
+                "SAS", "LEC", "CAG", "VEN", "FRO"
+        };
+
+        for (String team : teams) {
+
+            if (upper.contains(team)) {
+                return team;
+            }
+        }
+
+        return "";
+    }
+
+    private int extractClassicQuote(Element row) {
+
+        if (row == null) {
+            return 0;
+        }
+
+        /*
+         * Il testo della tabella contiene le quotazioni Classic
+         * e Mantra.
+         *
+         * Recuperiamo i numeri direttamente dalle celle.
+         */
+        Elements cells = row.select("td");
+
+        ArrayList<Integer> numbers =
+                new ArrayList<>();
+
+        for (Element cell : cells) {
+
+            String text = cell.text().trim();
+
+            if (text.matches("\\d+")) {
+
+                try {
+                    numbers.add(
+                            Integer.parseInt(text)
+                    );
+                } catch (Exception ignored) {
+                }
+            }
+        }
+
+        /*
+         * Nelle righe ufficiali normalmente le prime due
+         * quotazioni sono quelle Classic.
+         */
+        if (!numbers.isEmpty()) {
+            return numbers.get(0);
+        }
+
+        return 0;
+    }
+
+    private int extractFvm(Element row) {
+
+        if (row == null) {
+            return 0;
+        }
+
+        Elements cells = row.select("td");
+
+        ArrayList<Integer> numbers =
+                new ArrayList<>();
+
+        for (Element cell : cells) {
+
+            String text = cell.text().trim();
+
+            if (text.matches("\\d+")) {
+
+                try {
+                    numbers.add(
+                            Integer.parseInt(text)
+                    );
+                } catch (Exception ignored) {
+                }
+            }
+        }
+
+        /*
+         * In caso di struttura classica:
+         *
+         * QI Classic
+         * QA Classic
+         * FVM Classic
+         * QI Mantra
+         * QA Mantra
+         * FVM Mantra
+         *
+         * Il terzo numero è quindi il FVM Classic.
+         */
+        if (numbers.size() >= 3) {
+            return numbers.get(2);
+        }
+
+        return 0;
+    }
+
+    /*
+     * ============================================================
+     * PROBABILI FORMAZIONI FANTACALCIO
+     * ============================================================
+     */
+
+    private Map<String, ProbabilityInfo>
+    parseFantacalcioProbabili(
+            String html
+    ) {
+
+        Map<String, ProbabilityInfo> result =
+                new HashMap<>();
+
+        Document document = Jsoup.parse(html);
+
+        /*
+         * Cerchiamo i blocchi delle squadre.
+         *
+         * La pagina ufficiale mostra:
+         *
+         * squadra
+         * modulo
+         * giocatore
+         * percentuale
+         *
+         * quindi analizziamo le sezioni squadra per squadra.
+         */
+        Elements headings =
+                document.select("h2, h3");
+
+        String currentTeam = "";
+
+        for (Element heading : headings) {
+
+            String headingText =
+                    heading.text().trim();
+
+            if (isSerieATeam(headingText)) {
+                currentTeam =
+                        headingText;
+            }
+
+            if (!isSerieATeam(headingText)) {
+                continue;
+            }
+
+            Element container =
+                    findFormationContainer(
+                            heading
+                    );
+
+            if (container == null) {
+                continue;
+            }
+
+            Elements playerLinks =
+                    container.select(
+                            "a[href*='/serie-a/squadre/']"
+                    );
+
+            for (Element playerLink : playerLinks) {
+
+                String name =
+                        cleanName(playerLink.text());
+
+                if (name.isEmpty()) {
+                    continue;
                 }
 
-            } catch (Exception ignored) {
+                int probability =
+                        findProbabilityAfter(
+                                playerLink
+                        );
+
+                boolean bench =
+                        isInsideBench(
+                                playerLink
+                        );
+
+                boolean starter = !bench;
+
+                String key =
+                        normalize(name);
+
+                ProbabilityInfo info =
+                        result.get(key);
+
+                /*
+                 * Se lo stesso giocatore appare più volte,
+                 * conserviamo il valore più alto.
+                 */
+                if (info == null) {
+
+                    info =
+                            new ProbabilityInfo();
+
+                    result.put(key, info);
+                }
+
+                if (probability > info.percentage) {
+
+                    info.percentage =
+                            probability;
+
+                    info.starter =
+                            starter;
+
+                    info.bench =
+                            bench;
+
+                    info.team =
+                            currentTeam;
+                }
             }
         }
 
-        return best;
+        /*
+         * Fallback: la pagina potrebbe avere una struttura diversa
+         * a seconda degli aggiornamenti del sito.
+         *
+         * In quel caso cerchiamo tutti i link e la percentuale
+         * immediatamente successiva.
+         */
+        if (result.isEmpty()) {
+
+            Elements playerLinks =
+                    document.select(
+                            "a[href*='/serie-a/squadre/']"
+                    );
+
+            for (Element link : playerLinks) {
+
+                String name =
+                        cleanName(link.text());
+
+                if (name.isEmpty()) {
+                    continue;
+                }
+
+                int probability =
+                        findProbabilityAfter(link);
+
+                if (probability <= 0) {
+                    continue;
+                }
+
+                ProbabilityInfo info =
+                        new ProbabilityInfo();
+
+                info.percentage =
+                        probability;
+
+                info.starter = true;
+
+                result.put(
+                        normalize(name),
+                        info
+                );
+            }
+        }
+
+        return result;
     }
 
-    /*
-     * =========================================================
-     * FVM
-     * =========================================================
-     */
+    private Element findFormationContainer(
+            Element heading
+    ) {
 
-    private double detectFvm(
-            String context) {
+        Element current =
+                heading.nextElementSibling();
 
-        Pattern pattern =
-                Pattern.compile(
-                        "(?:FVM\\s*/\\s*1000|FVM)" +
-                        "\\s*([0-9]+)"
-                );
+        int counter = 0;
 
-        Matcher matcher =
-                pattern.matcher(
-                        context
-                );
+        while (current != null &&
+                counter < 20) {
 
-        double best = 0;
+            if (current.select(
+                    "a[href*='/serie-a/squadre/']"
+            ).size() > 0) {
 
-        while (matcher.find()) {
+                return current;
+            }
+
+            current =
+                    current.nextElementSibling();
+
+            counter++;
+        }
+
+        return heading.parent();
+    }
+
+    private int findProbabilityAfter(
+            Element playerLink
+    ) {
+
+        Element current =
+                playerLink.nextElementSibling();
+
+        int counter = 0;
+
+        while (current != null &&
+                counter < 4) {
+
+            String text =
+                    current.text().trim();
+
+            int probability =
+                    parsePercentage(text);
+
+            if (probability >= 0) {
+                return probability;
+            }
+
+            current =
+                    current.nextElementSibling();
+
+            counter++;
+        }
+
+        /*
+         * Secondo tentativo: stesso parent.
+         */
+        Element parent =
+                playerLink.parent();
+
+        if (parent != null) {
+
+            String text =
+                    parent.text();
+
+            int probability =
+                    parsePercentage(text);
+
+            if (probability >= 0) {
+                return probability;
+            }
+        }
+
+        return 0;
+    }
+
+    private int parsePercentage(String text) {
+
+        if (text == null) {
+            return -1;
+        }
+
+        text = text.trim();
+
+        if (text.matches("\\d{1,3}%")) {
 
             try {
-
-                double value =
-                        Double.parseDouble(
-                                matcher.group(1)
-                        );
-
-                best =
-                        Math.max(
-                                best,
-                                value
-                        );
-
+                return Integer.parseInt(
+                        text.replace("%", "")
+                );
             } catch (Exception ignored) {
             }
         }
 
-        return best;
+        return -1;
+    }
+
+    private boolean isInsideBench(
+            Element element
+    ) {
+
+        Element current = element;
+
+        for (int i = 0; i < 8 && current != null; i++) {
+
+            String text =
+                    current.text().toLowerCase(
+                            Locale.ROOT
+                    );
+
+            if (text.startsWith("panchina") ||
+                    text.contains("panchina")) {
+
+                return true;
+            }
+
+            current =
+                    current.parent();
+        }
+
+        return false;
     }
 
     /*
-     * =========================================================
-     * NORMALIZZAZIONE
-     * =========================================================
+     * ============================================================
+     * GAZZETTA / SKY
+     * ============================================================
      */
 
-    private String normalize(
-            String value) {
+    private Map<String, Integer>
+    parseExternalSource(String html) {
 
-        if (value == null) {
-            return "";
+        Map<String, Integer> result =
+                new HashMap<>();
+
+        if (html == null || html.isEmpty()) {
+            return result;
         }
 
-        return value
-                .toLowerCase(
-                        Locale.ITALIAN
-                )
-                .replace(
-                        "à",
-                        "a"
-                )
-                .replace(
-                        "è",
-                        "e"
-                )
-                .replace(
-                        "é",
-                        "e"
-                )
-                .replace(
-                        "ì",
-                        "i"
-                )
-                .replace(
-                        "ò",
-                        "o"
-                )
-                .replace(
-                        "ù",
-                        "u"
-                )
-                .replaceAll(
-                        "[^a-z0-9]",
-                        ""
-                );
-    }
-
-    /*
-     * =========================================================
-     * RIMOZIONE HTML
-     * =========================================================
-     */
-
-    private String stripHtml(
-            String html) {
-
-        if (html == null) {
-            return "";
-        }
+        Document document =
+                Jsoup.parse(html);
 
         String text =
-                html.replaceAll(
-                        "(?s)<script.*?</script>",
-                        " "
-                );
+                document.text();
 
-        text =
-                text.replaceAll(
-                        "(?s)<style.*?</style>",
-                        " "
-                );
+        /*
+         * Non usiamo il testo esterno per determinare il ruolo.
+         * Serve esclusivamente come conferma che il giocatore
+         * è presente nelle probabili.
+         */
+        for (String[] row : formazione) {
 
-        text =
-                text.replaceAll(
-                        "<[^>]*>",
-                        " "
-                );
+            if (row.length < 2) {
+                continue;
+            }
 
-        text =
-                text.replace(
-                        "&nbsp;",
-                        " "
-                );
+            String excelName =
+                    row[1];
 
-        text =
-                text.replace(
-                        "&amp;",
-                        "&"
-                );
+            String normalized =
+                    normalize(excelName);
 
-        text =
-                text.replace(
-                        "&quot;",
-                        "\""
-                );
+            if (normalized.isEmpty()) {
+                continue;
+            }
 
-        text =
-                text.replace(
-                        "&#39;",
-                        "'"
-                );
+            if (textContainsPlayer(
+                    text,
+                    excelName
+            )) {
 
-        return text;
+                result.put(
+                        normalized,
+                        1
+                );
+            }
+        }
+
+        return result;
+    }
+
+    private boolean textContainsPlayer(
+            String text,
+            String player
+    ) {
+
+        String a =
+                normalize(text);
+
+        String b =
+                normalize(player);
+
+        if (b.length() < 3) {
+            return false;
+        }
+
+        return a.contains(b);
     }
 
     /*
-     * =========================================================
-     * CONTROLLO PAROLE
-     * =========================================================
+     * ============================================================
+     * COSTRUZIONE ROSA
+     * ============================================================
      */
 
-    private boolean containsAny(
-            String text,
-            String... values) {
+    private ArrayList<Player> buildPlayers(
+            Map<String, OfficialPlayer> official,
+            Map<String, ProbabilityInfo> probabilities,
+            Map<String, Integer> gazzetta,
+            Map<String, Integer> sky
+    ) {
 
-        for (String value :
-                values) {
+        ArrayList<Player> result =
+                new ArrayList<>();
 
-            if (text.contains(value)) {
+        for (String[] row : formazione) {
+
+            if (row.length < 2) {
+                continue;
+            }
+
+            String excelName =
+                    row[1];
+
+            if (excelName == null ||
+                    excelName.trim().isEmpty()) {
+                continue;
+            }
+
+            OfficialPlayer officialPlayer =
+                    findOfficialPlayer(
+                            excelName,
+                            official
+                    );
+
+            if (officialPlayer == null) {
+
+                /*
+                 * Non inventiamo ruolo.
+                 */
+                Player player =
+                        new Player(
+                                excelName,
+                                excelName,
+                                "",
+                                "",
+                                0,
+                                0,
+                                0,
+                                0,
+                                false,
+                                false
+                        );
+
+                result.add(player);
+
+                continue;
+            }
+
+            ProbabilityInfo probability =
+                    probabilities.get(
+                            normalize(
+                                    officialPlayer.name
+                            )
+                    );
+
+            int probable =
+                    probability != null
+                            ? probability.percentage
+                            : 0;
+
+            boolean starter =
+                    probability != null &&
+                            probability.starter;
+
+            boolean bench =
+                    probability != null &&
+                            probability.bench;
+
+            int externalAgreement = 0;
+
+            String normalized =
+                    normalize(
+                            officialPlayer.name
+                    );
+
+            if (gazzetta.containsKey(normalized)) {
+                externalAgreement++;
+            }
+
+            if (sky.containsKey(normalized)) {
+                externalAgreement++;
+            }
+
+            Player player =
+                    new Player(
+                            excelName,
+                            officialPlayer.name,
+                            officialPlayer.team,
+                            officialPlayer.role,
+                            officialPlayer.classicQuote,
+                            officialPlayer.fvm,
+                            probable,
+                            externalAgreement,
+                            starter,
+                            bench
+                    );
+
+            result.add(player);
+        }
+
+        return result;
+    }
+
+    private OfficialPlayer findOfficialPlayer(
+            String excelName,
+            Map<String, OfficialPlayer> official
+    ) {
+
+        String normalized =
+                normalize(excelName);
+
+        OfficialPlayer exact =
+                official.get(normalized);
+
+        if (exact != null) {
+            return exact;
+        }
+
+        /*
+         * Matching più tollerante per casi come:
+         *
+         * Martinez Jo.
+         * Josep Martinez
+         *
+         * oppure accenti/punteggiatura.
+         */
+        for (Map.Entry<String, OfficialPlayer> entry :
+                official.entrySet()) {
+
+            if (similarNames(
+                    normalized,
+                    entry.getKey()
+            )) {
+                return entry.getValue();
+            }
+        }
+
+        return null;
+    }
+
+    private boolean similarNames(
+            String a,
+            String b
+    ) {
+
+        if (a.equals(b)) {
+            return true;
+        }
+
+        if (a.contains(b) ||
+                b.contains(a)) {
+            return true;
+        }
+
+        String[] aa = a.split(" ");
+        String[] bb = b.split(" ");
+
+        if (aa.length >= 2 &&
+                bb.length >= 2) {
+
+            String firstA = aa[0];
+            String lastA =
+                    aa[aa.length - 1];
+
+            String firstB = bb[0];
+            String lastB =
+                    bb[bb.length - 1];
+
+            if (firstA.equals(firstB) &&
+                    lastA.equals(lastB)) {
+                return true;
+            }
+
+            if (firstA.equals(lastB) &&
+                    lastA.equals(firstB)) {
                 return true;
             }
         }
@@ -1089,691 +1334,522 @@ public class MainActivity extends Activity {
     }
 
     /*
-     * =========================================================
-     * TROVA FORMAZIONE MIGLIORE
-     * =========================================================
+     * ============================================================
+     * OTTIMIZZAZIONE FORMAZIONE
+     * ============================================================
      */
 
-    private Formation findBestFormation(
-            List<PlayerInfo> players) {
+    private static class FormationResult {
 
-        Formation best = null;
+        String module;
+        ArrayList<Player> goalkeeper =
+                new ArrayList<>();
+
+        ArrayList<Player> defenders =
+                new ArrayList<>();
+
+        ArrayList<Player> midfielders =
+                new ArrayList<>();
+
+        ArrayList<Player> attackers =
+                new ArrayList<>();
+
+        double score;
+
+        boolean valid;
+    }
+
+    private FormationResult calculateBestFormation(
+            ArrayList<Player> players
+    ) {
+
+        FormationResult best = null;
 
         for (String module :
-                MODULES) {
+                Arrays.asList(
+                        "3-4-3",
+                        "4-4-2",
+                        "3-5-2",
+                        "4-5-1",
+                        "5-4-1"
+                )) {
 
-            Formation formation =
-                    buildBestFormationForModule(
-                            players,
-                            module
+            FormationResult result =
+                    calculateFormation(
+                            module,
+                            players
                     );
 
-            if (formation == null) {
+            if (!result.valid) {
                 continue;
             }
 
             if (best == null ||
-                    formation.score > best.score) {
+                    result.score > best.score) {
 
-                best = formation;
+                best = result;
             }
+        }
+
+        if (best == null) {
+
+            FormationResult empty =
+                    new FormationResult();
+
+            empty.module = "NESSUNA";
+            empty.valid = false;
+
+            return empty;
         }
 
         return best;
     }
 
-    /*
-     * =========================================================
-     * FORMAZIONE PER MODULO
-     * =========================================================
-     */
+    private FormationResult calculateFormation(
+            String module,
+            ArrayList<Player> players
+    ) {
 
-    private Formation buildBestFormationForModule(
-            List<PlayerInfo> players,
-            String module) {
+        FormationResult result =
+                new FormationResult();
+
+        result.module = module;
 
         String[] parts =
                 module.split("-");
 
         int defenders =
-                Integer.parseInt(
-                        parts[0]
-                );
+                Integer.parseInt(parts[0]);
 
         int midfielders =
-                Integer.parseInt(
-                        parts[1]
-                );
+                Integer.parseInt(parts[1]);
 
         int attackers =
-                Integer.parseInt(
-                        parts[2]
-                );
+                Integer.parseInt(parts[2]);
 
-        List<PlayerInfo> goalkeepers =
-                getByRole(
-                        players,
-                        "POR"
-                );
+        List<Player> goalkeepers =
+                playersForRole(players, "P");
 
-        List<PlayerInfo> defenderList =
-                getByRole(
-                        players,
-                        "DIF"
-                );
+        List<Player> defenderList =
+                playersForRole(players, "D");
 
-        List<PlayerInfo> midfielderList =
-                getByRole(
-                        players,
-                        "CEN"
-                );
+        List<Player> midfielderList =
+                playersForRole(players, "C");
 
-        List<PlayerInfo> attackerList =
-                getByRole(
-                        players,
-                        "ATT"
-                );
+        List<Player> attackerList =
+                playersForRole(players, "A");
 
-        if (goalkeepers.size() < 1 ||
+        if (goalkeepers.isEmpty() ||
                 defenderList.size() < defenders ||
                 midfielderList.size() < midfielders ||
                 attackerList.size() < attackers) {
 
-            return null;
+            result.valid = false;
+
+            return result;
         }
 
-        sortPlayers(
-                goalkeepers
-        );
+        sortByScore(goalkeepers);
+        sortByScore(defenderList);
+        sortByScore(midfielderList);
+        sortByScore(attackerList);
 
-        sortPlayers(
-                defenderList
-        );
-
-        sortPlayers(
-                midfielderList
-        );
-
-        sortPlayers(
-                attackerList
-        );
-
-        Formation result =
-                new Formation();
-
-        result.module =
-                module;
-
-        result.goalkeepers.add(
+        result.goalkeeper.add(
                 goalkeepers.get(0)
         );
 
-        for (int i = 0;
-             i < defenders;
-             i++) {
+        result.defenders.addAll(
+                defenderList.subList(
+                        0,
+                        defenders
+                )
+        );
 
-            result.defenders.add(
-                    defenderList.get(i)
-            );
+        result.midfielders.addAll(
+                midfielderList.subList(
+                        0,
+                        midfielders
+                )
+        );
+
+        result.attackers.addAll(
+                attackerList.subList(
+                        0,
+                        attackers
+                )
+        );
+
+        result.score = 0;
+
+        for (Player p :
+                result.goalkeeper) {
+            result.score += p.score;
         }
 
-        for (int i = 0;
-             i < midfielders;
-             i++) {
-
-            result.midfielders.add(
-                    midfielderList.get(i)
-            );
+        for (Player p :
+                result.defenders) {
+            result.score += p.score;
         }
 
-        for (int i = 0;
-             i < attackers;
-             i++) {
-
-            result.attackers.add(
-                    attackerList.get(i)
-            );
+        for (Player p :
+                result.midfielders) {
+            result.score += p.score;
         }
 
-        result.score =
-                calculateFormationScore(
-                        result
-                );
+        for (Player p :
+                result.attackers) {
+            result.score += p.score;
+        }
+
+        result.valid = true;
 
         return result;
     }
 
-    /*
-     * =========================================================
-     * FILTRA PER RUOLO
-     * =========================================================
-     */
+    private List<Player> playersForRole(
+            ArrayList<Player> players,
+            String role
+    ) {
 
-    private List<PlayerInfo> getByRole(
-            List<PlayerInfo> players,
-            String role) {
-
-        List<PlayerInfo> result =
+        ArrayList<Player> result =
                 new ArrayList<>();
 
-        for (PlayerInfo player :
-                players) {
+        for (Player player : players) {
 
-            if (role.equals(
-                    player.role
-            )) {
-
-                result.add(
-                        player
-                );
+            if (role.equals(player.role)) {
+                result.add(player);
             }
         }
 
         return result;
     }
 
-    /*
-     * =========================================================
-     * ORDINAMENTO
-     * =========================================================
-     */
+    private void sortByScore(
+            List<Player> players
+    ) {
 
-    private void sortPlayers(
-            List<PlayerInfo> players) {
-
-        players.sort(
+        Collections.sort(
+                players,
                 (a, b) ->
                         Double.compare(
-                                playerValue(b),
-                                playerValue(a)
+                                b.score,
+                                a.score
                         )
         );
     }
 
     /*
-     * =========================================================
-     * PUNTEGGIO GIOCATORE
-     * =========================================================
+     * ============================================================
+     * RISULTATO
+     * ============================================================
      */
 
-    private double playerValue(
-            PlayerInfo player) {
+    private void displayResult(
+            ArrayList<Player> players,
+            FormationResult best
+    ) {
 
-        double value = 0;
-
-        /*
-         * Titolarità:
-         * massimo 60 punti.
-         */
-        value +=
-                player.starterProbability
-                        * 0.60;
-
-        /*
-         * Rendimento:
-         * piccolo contributo.
-         */
-        value +=
-                player.fantasyScore
-                        * 5.0;
-
-        /*
-         * Un giocatore non trovato online
-         * viene penalizzato.
-         */
-        if (!player.foundOnline) {
-
-            value -= 15;
-        }
-
-        /*
-         * Indisponibilità:
-         * forte penalizzazione.
-         */
-        if (player.injured) {
-
-            value -= 100;
-        }
-
-        if (player.suspended) {
-
-            value -= 100;
-        }
-
-        /*
-         * Dubbio:
-         * penalità moderata.
-         */
-        if (player.doubtful) {
-
-            value -= 20;
-        }
-
-        return value;
-    }
-
-    /*
-     * =========================================================
-     * PUNTEGGIO FORMAZIONE
-     * =========================================================
-     */
-
-    private double calculateFormationScore(
-            Formation formation) {
-
-        double score = 0;
-
-        for (PlayerInfo player :
-                formation.goalkeepers) {
-
-            score +=
-                    playerValue(
-                            player
-                    );
-        }
-
-        for (PlayerInfo player :
-                formation.defenders) {
-
-            score +=
-                    playerValue(
-                            player
-                    );
-        }
-
-        for (PlayerInfo player :
-                formation.midfielders) {
-
-            score +=
-                    playerValue(
-                            player
-                    );
-        }
-
-        for (PlayerInfo player :
-                formation.attackers) {
-
-            score +=
-                    playerValue(
-                            player
-                    );
-        }
-
-        return score;
-    }
-
-    /*
-     * =========================================================
-     * RISULTATO FINALE
-     * =========================================================
-     */
-
-    private String buildFinalResult(
-            List<PlayerInfo> players,
-            Formation best) {
-
-        StringBuilder result =
+        StringBuilder sb =
                 new StringBuilder();
 
-        result.append(
-                "FORMAZIONE OTTIMALE\n"
-        );
+        sb.append("ANALISI COMPLETATA\n");
+        sb.append("==================\n\n");
 
-        result.append(
-                "========================\n\n"
-        );
+        sb.append("RUOLI CLASSIC RILEVATI\n\n");
 
-        if (best == null) {
+        for (Player player : players) {
 
-            result.append(
-                    "Non sono riuscito a costruire " +
-                    "una formazione completa.\n\n"
-            );
+            sb.append(player.excelName)
+                    .append(" → ");
 
-            result.append(
-                    "RUOLI RICONOSCIUTI\n"
-            );
+            if (player.role.isEmpty()) {
 
-            result.append(
-                    "------------------------\n"
-            );
+                sb.append("RUOLO NON DETERMINATO");
 
-            for (PlayerInfo player :
-                    players) {
+            } else {
 
-                result.append(
-                        player.name
-                );
-
-                result.append(
-                        " → "
-                );
-
-                result.append(
-                        player.role.isEmpty()
-                                ? "RUOLO NON TROVATO"
-                                : player.role
-                );
-
-                result.append(
-                        "\n"
-                );
+                sb.append(roleName(
+                        player.role
+                ));
             }
 
-            return result.toString();
+            sb.append("\n");
+
+            if (!player.officialName
+                    .equals(player.excelName)) {
+
+                sb.append("   Nome ufficiale: ")
+                        .append(player.officialName)
+                        .append("\n");
+            }
+
+            if (!player.team.isEmpty()) {
+
+                sb.append("   Squadra: ")
+                        .append(player.team)
+                        .append("\n");
+            }
+
+            sb.append("   Probabile: ")
+                    .append(player.probable)
+                    .append("%\n");
+
+            sb.append("   FVM: ")
+                    .append(player.fvm)
+                    .append("\n");
+
+            sb.append("   Conferme Gazzetta/Sky: ")
+                    .append(player.externalAgreement)
+                    .append("/2\n\n");
         }
 
-        result.append(
-                "Modulo scelto: "
-        );
+        sb.append("\n");
 
-        result.append(
-                best.module
-        );
+        if (!best.valid) {
 
-        result.append(
-                "\nPunteggio: "
-        );
+            sb.append(
+                    "NON È STATO POSSIBILE CREARE " +
+                    "UNA FORMAZIONE VALIDA.\n\n"
+            );
 
-        result.append(
-                String.format(
-                        Locale.ITALIAN,
-                        "%.1f",
-                        best.score
+            sb.append(
+                    "Probabilmente uno o più ruoli Classic " +
+                    "non sono stati riconosciuti dal Listone."
+            );
+
+            resultText.setText(sb.toString());
+
+            return;
+        }
+
+        sb.append("================================\n");
+        sb.append("FORMAZIONE OTTIMALE\n");
+        sb.append("================================\n\n");
+
+        sb.append("MODULO: ")
+                .append(best.module)
+                .append("\n");
+
+        sb.append("PUNTEGGIO: ")
+                .append(
+                        String.format(
+                                Locale.US,
+                                "%.1f",
+                                best.score
+                        )
                 )
-        );
+                .append("\n\n");
 
-        result.append(
-                "\n\n"
-        );
+        sb.append("PORTIERE\n");
 
-        result.append(
-                "PORTIERE\n"
-        );
+        for (Player p :
+                best.goalkeeper) {
 
-        result.append(
-                "------------------------\n"
-        );
-
-        appendPlayers(
-                result,
-                best.goalkeepers
-        );
-
-        result.append(
-                "\nDIFENSORI\n"
-        );
-
-        result.append(
-                "------------------------\n"
-        );
-
-        appendPlayers(
-                result,
-                best.defenders
-        );
-
-        result.append(
-                "\nCENTROCAMPISTI\n"
-        );
-
-        result.append(
-                "------------------------\n"
-        );
-
-        appendPlayers(
-                result,
-                best.midfielders
-        );
-
-        result.append(
-                "\nATTACCANTI\n"
-        );
-
-        result.append(
-                "------------------------\n"
-        );
-
-        appendPlayers(
-                result,
-                best.attackers
-        );
-
-        result.append(
-                "\n\nANALISI ROSA\n"
-        );
-
-        result.append(
-                "========================\n"
-        );
-
-        for (PlayerInfo player :
-                players) {
-
-            result.append(
-                    player.name
-            );
-
-            result.append(
-                    " | "
-            );
-
-            result.append(
-                    player.role.isEmpty()
-                            ? "?"
-                            : player.role
-            );
-
-            result.append(
-                    " | tit. "
-            );
-
-            result.append(
-                    String.format(
-                            Locale.ITALIAN,
-                            "%.0f%%",
-                            player.starterProbability
-                    )
-            );
-
-            if (player.injured) {
-
-                result.append(
-                        " | INFORTUNATO"
-                );
-            }
-
-            if (player.suspended) {
-
-                result.append(
-                        " | SQUALIFICATO"
-                );
-            }
-
-            if (player.doubtful) {
-
-                result.append(
-                        " | IN DUBBIO"
-                );
-            }
-
-            result.append(
-                    "\n"
+            appendSelectedPlayer(
+                    sb,
+                    p
             );
         }
 
-        result.append(
-                "\n\nNOTA\n"
+        sb.append("\nDIFENSORI\n");
+
+        for (Player p :
+                best.defenders) {
+
+            appendSelectedPlayer(
+                    sb,
+                    p
+            );
+        }
+
+        sb.append("\nCENTROCAMPISTI\n");
+
+        for (Player p :
+                best.midfielders) {
+
+            appendSelectedPlayer(
+                    sb,
+                    p
+            );
+        }
+
+        sb.append("\nATTACCANTI\n");
+
+        for (Player p :
+                best.attackers) {
+
+            appendSelectedPlayer(
+                    sb,
+                    p
+            );
+        }
+
+        sb.append("\n\n================================\n");
+        sb.append("MODULI ANALIZZATI\n");
+        sb.append("================================\n");
+
+        sb.append(
+                "3-4-3\n" +
+                "4-4-2\n" +
+                "3-5-2\n" +
+                "4-5-1\n" +
+                "5-4-1\n"
         );
 
-        result.append(
-                "La formazione è una proposta " +
-                "automatica basata sui dati " +
-                "online disponibili."
-        );
-
-        return result.toString();
+        resultText.setText(sb.toString());
     }
 
-    /*
-     * =========================================================
-     * STAMPA GIOCATORI
-     * =========================================================
-     */
+    private void appendSelectedPlayer(
+            StringBuilder sb,
+            Player p
+    ) {
 
-    private void appendPlayers(
-            StringBuilder result,
-            List<PlayerInfo> players) {
+        sb.append("• ")
+                .append(p.excelName)
+                .append("  ")
+                .append(p.probable)
+                .append("%");
 
-        for (PlayerInfo player :
-                players) {
+        if (p.externalAgreement > 0) {
 
-            result.append(
-                    "✓ "
-            );
-
-            result.append(
-                    player.name
-            );
-
-            result.append(
-                    " ("
-            );
-
-            result.append(
-                    String.format(
-                            Locale.ITALIAN,
-                            "%.0f%%",
-                            player.starterProbability
+            sb.append(
+                    "  ["
+            )
+                    .append(
+                            p.externalAgreement
                     )
-            );
+                    .append(
+                            "/2 conferme"
+                    )
+                    .append(
+                            "]"
+                    );
+        }
 
-            result.append(
-                    ")\n"
-            );
+        sb.append("\n");
+    }
+
+    private String roleName(
+            String role
+    ) {
+
+        switch (role) {
+
+            case "P":
+                return "PORTIERE";
+
+            case "D":
+                return "DIFENSORE";
+
+            case "C":
+                return "CENTROCAMPISTA";
+
+            case "A":
+                return "ATTACCANTE";
+
+            default:
+                return "SCONOSCIUTO";
         }
     }
 
     /*
-     * =========================================================
-     * EXCEL
-     * =========================================================
+     * ============================================================
+     * UTILITY
+     * ============================================================
      */
 
-    @Override
-    protected void onActivityResult(
-            int requestCode,
-            int resultCode,
-            Intent data) {
+    private String cleanName(
+            String text
+    ) {
 
-        super.onActivityResult(
-                requestCode,
-                resultCode,
-                data
-        );
-
-        if (requestCode == PICK_XLSX &&
-                resultCode == RESULT_OK &&
-                data != null &&
-                data.getData() != null) {
-
-            Uri uri =
-                    data.getData();
-
-            try {
-
-                currentPlayers =
-                        XlsxReader.read(
-                                this,
-                                uri
-                        );
-
-                StringBuilder result =
-                        new StringBuilder();
-
-                result.append(
-                        "FORMAZIONE LETTA\n"
-                );
-
-                result.append(
-                        "====================\n\n"
-                );
-
-                result.append(
-                        "Squadra: One Pisa\n"
-                );
-
-                result.append(
-                        "Giocatori: "
-                );
-
-                result.append(
-                        currentPlayers.size()
-                );
-
-                result.append(
-                        "\n\n"
-                );
-
-                for (String[] player :
-                        currentPlayers) {
-
-                    result.append(
-                            player[1]
-                    );
-
-                    if (player[2] != null &&
-                            !player[2].isEmpty()) {
-
-                        result.append(
-                                " - "
-                        );
-
-                        result.append(
-                                player[2]
-                        );
-
-                        result.append(
-                                " crediti"
-                        );
-                    }
-
-                    result.append(
-                            "\n"
-                    );
-                }
-
-                resultText.setText(
-                        result.toString()
-                );
-
-                Toast.makeText(
-                        this,
-                        "Formazione caricata!",
-                        Toast.LENGTH_LONG
-                ).show();
-
-            } catch (Exception e) {
-
-                resultText.setText(
-                        "Errore nella lettura del file:\n\n" +
-                        e.getMessage()
-                );
-
-                Toast.makeText(
-                        this,
-                        "Errore nel file Excel",
-                        Toast.LENGTH_LONG
-                ).show();
-            }
+        if (text == null) {
+            return "";
         }
+
+        return text
+                .replace("\u00a0", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
     }
 
-    @Override
-    protected void onDestroy() {
+    private String normalize(
+            String text
+    ) {
 
-        executor.shutdownNow();
+        if (text == null) {
+            return "";
+        }
 
-        super.onDestroy();
+        String normalized =
+                Normalizer.normalize(
+                        text,
+                        Normalizer.Form.NFD
+                );
+
+        normalized =
+                normalized.replaceAll(
+                        "\\p{InCombiningDiacriticalMarks}+",
+                        ""
+                );
+
+        normalized =
+                normalized.toLowerCase(
+                        Locale.ROOT
+                );
+
+        normalized =
+                normalized.replaceAll(
+                        "[^a-z0-9 ]",
+                        " "
+                );
+
+        normalized =
+                normalized.replaceAll(
+                        "\\s+",
+                        " "
+                )
+                .trim();
+
+        return normalized;
+    }
+
+    private boolean isSerieATeam(
+            String text
+    ) {
+
+        String normalized =
+                normalize(text);
+
+        String[] teams = {
+                "inter",
+                "napoli",
+                "milan",
+                "roma",
+                "juventus",
+                "atalanta",
+                "bologna",
+                "lazio",
+                "fiorentina",
+                "torino",
+                "genoa",
+                "como",
+                "parma",
+                "monza",
+                "udinese",
+                "sassuolo",
+                "lecce",
+                "cagliari",
+                "venezia",
+                "frosinone"
+        };
+
+        for (String team : teams) {
+
+            if (normalized.equals(team)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }
