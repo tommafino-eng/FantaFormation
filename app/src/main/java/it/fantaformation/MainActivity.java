@@ -629,18 +629,10 @@ public class MainActivity extends Activity {
                     );
 
             player.role =
-                    extractRoleFromPlayerElement(
+                    RoleExtractor.extractFromPlayerProfile(
                             link,
                             row
                     );
-
-            if (player.role.isEmpty()) {
-
-                player.role =
-                        extractRoleFromAttributes(
-                                row
-                        );
-            }
 
             String key =
                     normalize(
@@ -657,156 +649,6 @@ public class MainActivity extends Activity {
         }
 
         return result;
-    }
-
-    private String extractRoleFromPlayerElement(
-            Element link,
-            Element row
-    ) {
-
-        String[] attributes = {
-                "data-role",
-                "data-ruolo",
-                "role",
-                "title",
-                "aria-label",
-                "class"
-        };
-
-        for (String attribute :
-                attributes) {
-
-            String value =
-                    link.attr(
-                            attribute
-                    );
-
-            String role =
-                    roleFromText(
-                            value
-                    );
-
-            if (!role.isEmpty()) {
-                return role;
-            }
-        }
-
-        if (row != null) {
-
-            Elements elements =
-                    row.select(
-                            "[data-role], " +
-                            "[data-ruolo], " +
-                            "[title], " +
-                            "[aria-label]"
-                    );
-
-            for (Element element :
-                    elements) {
-
-                for (String attribute :
-                        attributes) {
-
-                    String value =
-                            element.attr(
-                                    attribute
-                            );
-
-                    String role =
-                            roleFromText(
-                                    value
-                            );
-
-                    if (!role.isEmpty()) {
-                        return role;
-                    }
-                }
-            }
-        }
-
-        return "";
-    }
-
-    private String extractRoleFromAttributes(
-            Element row
-    ) {
-
-        if (row == null) {
-            return "";
-        }
-
-        String html =
-                row.outerHtml();
-
-        return roleFromText(
-                html
-        );
-    }
-
-    private String roleFromText(
-            String text
-    ) {
-
-        if (text == null) {
-            return "";
-        }
-
-        String normalized =
-                normalize(text);
-
-        if (normalized.contains(
-                "portiere"
-        )) {
-            return "P";
-        }
-
-        if (normalized.contains(
-                "difensore"
-        )) {
-            return "D";
-        }
-
-        if (normalized.contains(
-                "centrocampista"
-        )) {
-            return "C";
-        }
-
-        if (normalized.contains(
-                "attaccante"
-        )) {
-            return "A";
-        }
-
-        /*
-         * Abbreviazioni consentite soltanto se
-         * presenti come attributo strutturato.
-         */
-        if (normalized.matches(
-                ".*\\bp\\b.*"
-        )) {
-            return "P";
-        }
-
-        if (normalized.matches(
-                ".*\\bd\\b.*"
-        )) {
-            return "D";
-        }
-
-        if (normalized.matches(
-                ".*\\bc\\b.*"
-        )) {
-            return "C";
-        }
-
-        if (normalized.matches(
-                ".*\\ba\\b.*"
-        )) {
-            return "A";
-        }
-
-        return "";
     }
 
     private String extractTeam(
