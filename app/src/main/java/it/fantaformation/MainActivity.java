@@ -205,7 +205,7 @@ public class MainActivity extends Activity {
                  *
                  * Non InputStream.
                  */
-                ArrayList<String[]> result =
+                List<String[]> result =
                         XlsxReader.read(
                                 MainActivity.this,
                                 uri
