@@ -2,12 +2,17 @@ package it.fantaformation;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.ActivityOptions;
+import android.app.TimePickerDialog;
+import android.app.Dialog;
 import android.os.Bundle;
 import android.content.Intent;
 import android.net.Uri;
+import android.provider.Settings;
 import android.os.Build;
-import android.os.Bundle;
 import android.os.PowerManager;
+import android.os.Handler;
+import android.os.Looper;
 import android.Manifest;
 import android.content.pm.PackageManager;
 import android.view.View;
@@ -48,7 +53,6 @@ import java.net.URL;
 import java.text.Normalizer;
 import java.text.SimpleDateFormat;
 import java.util.Date;
-import java.util.Calendar;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -68,14 +72,74 @@ import java.util.regex.Pattern;
 
 public class MainActivity extends Activity {
 
+    private static final String PREFS_APP = "fantaformation_app";
+    private static final String PREF_SAVED_FORMATION = "saved_formation";
+    private static final String PREF_SELECTED_TEAM = "selected_team";
+    private static final String PREF_AUTO_WEEKLY = "auto_weekly";
+    private static final String PREF_AUTO_HOUR = "auto_hour";
+    private static final String PREF_AUTO_MINUTE = "auto_minute";
+
+    private static final String ACTION_SCHEDULED_AUTO = "it.fantaformation.ACTION_SCHEDULED_AUTO";
+    private static final String LEGA_HOME_URL = "https://leghe.fantacalcio.it/yoooo";
+    private static final int WEEKLY_ALARM_REQUEST = 24051;
+    private static final int NOTIFICATION_PERMISSION_REQUEST = 701;
+    private static final long AUTO_INSERT_PAGE_SETTLE_MS = 650L;
+
+    private static final Set<String> ALLOWED_FORMATIONS = new HashSet<>(Arrays.asList(
+            "3-4-3", "3-5-2", "3-4-1-2", "3-4-2-1", "3-5-1-1",
+            "4-3-3", "4-4-2", "4-3-1-2", "4-2-3-1", "4-1-4-1",
+            "4-5-1", "5-3-2", "5-4-1", "5-2-3"
+    ));
+
     private LinearLayout root;
     private ScrollView scrollView;
     private TextView resultText;
     private LinearLayout resultContainer;
+    private LinearLayout statusContainer;
     private Button sendToLegheButton;
+    private Spinner teamSpinner;
+
+    private final Map<String, TextView> statusViews = new LinkedHashMap<>();
+    private final ExecutorService executor = Executors.newCachedThreadPool();
+    private final Handler automationHandler = new Handler(Looper.getMainLooper());
 
     private List<String[]> formazione;
     private PlayerRoleCache roleCache;
+    private CredentialsManager credentialsManager;
+
+    private LinkedHashMap<String, List<String[]>> detectedTeams = new LinkedHashMap<>();
+    private ArrayList<String> detectedTeamNames = new ArrayList<>();
+    private String selectedTeamName = "";
+    private boolean updatingTeamSpinner;
+
+    private volatile boolean autoRunRequested;
+    private volatile boolean autoFlowEnabled;
+    private volatile boolean loginAttempted;
+    private volatile boolean loginInProgress;
+    private volatile boolean loginAutoScheduled;
+    private volatile boolean lineupLoadTriggered;
+    private volatile boolean pendingAutoFill;
+    private volatile boolean autoInsertAfterFormationNav;
+    private volatile boolean saveVerificationStarted;
+    private volatile boolean notificationPending;
+
+    private int formationNavAttempts;
+    private FormationResult currentBestResult;
+    private ArrayList<Player> lastParsedPlayers;
+    private AgentDecision agentDecision;
+    private PowerManager.WakeLock automationWakeLock;
+
+    private static final String FANTACALCIO_STATS = "https://www.fantacalcio.it/serie-a/statistiche";
+    private static final String FANTACALCIO_STATS_SUMMARY = "https://www.fantacalcio.it/serie-a/statistiche";
+    private static final String FANTACALCIO_QUOTE = "https://www.fantacalcio.it/quotazioni";
+    private static final String FANTACALCIO_PROBABILI = "https://www.fantacalcio.it/probabili-formazioni";
+    private static final String GAZZETTA_PROBABILI = "https://www.gazzetta.it/calcio/fantanews/probabili-formazioni";
+    private static final String SKY_PROBABILI = "https://sport.sky.it/calcio/serie-a/probabili-formazioni";
+    private static final String FANTACALCIO_NEWS = "https://www.fantacalcio.it/news";
+    private static final String FANTACALCIO_CONSIGLI = "https://www.fantacalcio.it/consigli-fantacalcio";
+    private static final String FANTACALCIO_CALENDAR = "https://www.fantacalcio.it/serie-a/calendario";
+    private static final String FANTACALCIO_RECENT_BASE = "https://www.fantacalcio.it/serie-a/statistiche";
+
 
     private void releaseAutomationWakeLock() {
         try {
@@ -141,6 +205,11 @@ public class MainActivity extends Activity {
 
 
         roleCache = new PlayerRoleCache(this);
+        credentialsManager = new CredentialsManager(this);
+        loadSavedFormation();
+        selectedTeamName = getSharedPreferences(PREFS_APP, MODE_PRIVATE)
+                .getString(PREF_SELECTED_TEAM, "")
+                .trim();
         buildInterface();
         if (formazione != null && !formazione.isEmpty()) {
             setStepState("EXCEL", 2, "Rosa salvata disponibile: " + formazione.size() + " righe");
@@ -157,6 +226,34 @@ public class MainActivity extends Activity {
                 if (!isFinishing()) startFullAutomaticFlow();
             }, 450);
         }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        android.content.SharedPreferences prefs = getSharedPreferences(PREFS_APP, MODE_PRIVATE);
+        if (prefs.getBoolean(PREF_AUTO_WEEKLY, false)) {
+            // Dopo il ritorno dalle impostazioni "Sveglie e promemoria", riprogramma subito l'esecuzione.
+            AutomationScheduler.scheduleWeekly(this);
+        }
+    }
+
+    @Override
+    protected void onDestroy() {
+        try {
+            automationHandler.removeCallbacksAndMessages(null);
+        } catch (Throwable ignored) {
+        }
+        if (isFinishing()) {
+            autoFlowEnabled = false;
+            autoRunRequested = false;
+        }
+        releaseAutomationWakeLock();
+        try {
+            executor.shutdownNow();
+        } catch (Throwable ignored) {
+        }
+        super.onDestroy();
     }
 
     private int dp(int value) {
@@ -495,7 +592,7 @@ public class MainActivity extends Activity {
                     if (autoFlowEnabled && autoInsertAfterFormationNav && currentBestResult != null && currentBestResult.valid) {
                         autoInsertAfterFormationNav = false;
                         setStepState("FORMAZIONE", 1, "Preparo modulo e inserimento automatico...");
-                        view.postDelayed(() -> executeAutoFillScript(view), 1400);
+                        view.postDelayed(() -> executeAutoFillScript(view), AUTO_INSERT_PAGE_SETTLE_MS);
                     }
                     return;
                 }
@@ -629,7 +726,7 @@ public class MainActivity extends Activity {
                     scheduleAutoInsertWhenReady(webView);
                 }
             });
-        }, 900);
+        }, 450);
     }
 
     private void openSchieraFormazioneFromDashboard(WebView webView) {
@@ -689,7 +786,7 @@ public class MainActivity extends Activity {
             } else if ("clicked".equals(result)) {
                 autoInsertAfterFormationNav = true;
                 setStepState("LEGA", 1, "Inserisci formazione selezionato...");
-                webView.postDelayed(() -> scheduleAutoInsertWhenReady(webView), 900);
+                webView.postDelayed(() -> scheduleAutoInsertWhenReady(webView), 450);
             } else if (formationNavAttempts < 12) {
                 webView.postDelayed(() -> openSchieraFormazioneFromDashboard(webView), 550);
             } else {
@@ -914,7 +1011,7 @@ public class MainActivity extends Activity {
                 "function clickPlayer(e){if(!e)return false;let p=e;for(let i=0;i<8&&p;i++,p=p.parentElement){if(p.tagName==='A')continue;if(p.tagName==='BUTTON'||p.getAttribute('role')==='button'||p.getAttribute('role')==='option'||p.getAttribute('role')==='radio'||p.hasAttribute('data-player')||p.tagName==='LI')return fire(p);}return fire(e);}" +
                 "async function waitDrawer(before){for(let i=0;i<40;i++){const r=pickerRoot();if(r&&r!==before)return r;if(r&&drawerText(r).includes('rosa'))return r;await sleep(200);}return null;}" +
                 "async function waitDrawerClose(root){for(let i=0;i<30;i++){if(!root||!visible(root)||!drawerText(root).includes('rosa'))return true;await sleep(200);}return false;}" +
-                "async function choosePlayer(root,name){for(let pass=0;pass<3;pass++){pickerSearch(root,name);await sleep(400);for(let i=0;i<25;i++){const c=candidatePlayer(root,name);if(c&&clickPlayer(c)){await sleep(700);return true;}await sleep(250);}await sleep(300);}return false;}" +
+                "async function choosePlayer(root,name,slot){for(let pass=0;pass<2;pass++){pickerSearch(root,name);await sleep(220);for(let i=0;i<22;i++){const c=candidatePlayer(root,name);if(c&&clickPlayer(c)){for(let v=0;v<18;v++){if(slot&&verify(slot,name))return true;await sleep(100);}if(!slot)return true;}await sleep(140);}await sleep(180);}return false;}" +
                 "function verify(slot,name){return nameMatches(currentName(slot),norm(name));}" +
                 "function occupiedCount(){return slots().filter(s=>!!currentName(s)).length;}" +
                 "function clearButton(){const scope=document.querySelector('view-lineup')||document;const els=[...scope.querySelectorAll('button,[role=button],a,[title],[aria-label]')].filter(e=>visible(e)&&enabled(e)&&!norm(e.innerText||e.textContent||'').includes('salva formazione'));let best=null,bestScore=-1;for(const e of els){const t=norm((e.innerText||e.textContent||'')+' '+(e.getAttribute('aria-label')||'')+' '+(e.getAttribute('title')||'')+' '+(e.getAttribute('data-testid')||'')+' '+(e.getAttribute('data-test')||''));const html=norm(e.outerHTML||'');let sc=0;if(t.includes('svuota'))sc+=100;if(t.includes('cestino'))sc+=100;if(t.includes('trash'))sc+=95;if(t.includes('clear'))sc+=85;if(t.includes('reset'))sc+=80;if(t.includes('azzera'))sc+=80;if(t.includes('elimina formazione'))sc+=120;if(html.includes('trash')||html.includes('delete')||html.includes('remove'))sc+=45;if(e.querySelector('svg'))sc+=5;if(sc>bestScore){bestScore=sc;best=e;}}return bestScore>=45?best:null;}" +
@@ -944,8 +1041,8 @@ public class MainActivity extends Activity {
                 "let root=await waitDrawer(before);" +
                 "if(!root){AndroidBridge.report('INSERISCI: Rosa non aperta per '+item.name+' slot '+key);fail++;continue;}" +
                 "if(!drawerText(root).includes('rosa'))AndroidBridge.report('INSERISCI: drawer aperto, testo Rosa non rilevato per '+item.name);" +
-                "if(!(await choosePlayer(root,item.name))){AndroidBridge.report('INSERISCI: '+item.name+' non trovato nella Rosa');fail++;continue;}" +
-                "await waitDrawerClose(root);await sleep(800);" +
+                "if(!(await choosePlayer(root,item.name,slot))){AndroidBridge.report('INSERISCI: '+item.name+' non trovato o non confermato nella Rosa');fail++;continue;}" +
+                "await sleep(120);" +
                 "if(verify(slot,item.name)){ok++;AndroidBridge.report('INSERISCI: '+item.name+' inserito nello slot '+key);}else{fail++;AndroidBridge.report('INSERISCI: verifica fallita per '+item.name+' nello slot '+key+'; trovato='+currentName(slot));}" +
                 "}" +
                 "if(fail>0||ok!==players.length){AndroidBridge.report('INSERISCI FALLITO: '+ok+'/'+players.length+' verificati, errori '+fail+'. Salvataggio NON eseguito.');return;}" +
@@ -1105,9 +1202,21 @@ public class MainActivity extends Activity {
             prefs.edit().putBoolean(PREF_AUTO_WEEKLY, true)
                     .putInt(PREF_AUTO_HOUR, selectedHour)
                     .putInt(PREF_AUTO_MINUTE, selectedMinute).apply();
-            scheduleWeeklyAutomationIfEnabled();
+            boolean scheduled = AutomationScheduler.scheduleWeekly(this);
             updateScheduleButton(button);
-            Toast.makeText(this, String.format(Locale.ROOT, "Automazione ogni venerdì alle %02d:%02d attivata", selectedHour, selectedMinute), Toast.LENGTH_LONG).show();
+            if (scheduled) {
+                Toast.makeText(this, String.format(Locale.ROOT, "Automazione ogni venerdì alle %02d:%02d attivata", selectedHour, selectedMinute), Toast.LENGTH_LONG).show();
+            } else {
+                Toast.makeText(this, "Per l'automazione precisa abilita Sveglie e promemoria per FantaFormation.", Toast.LENGTH_LONG).show();
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    try {
+                        Intent settings = new Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM);
+                        settings.setData(android.net.Uri.parse("package:" + getPackageName()));
+                        startActivity(settings);
+                    } catch (Throwable ignored) {
+                    }
+                }
+            }
         }, hour, minute, true);
         picker.setTitle("Ogni venerdì alle...");
         picker.setButton(AlertDialog.BUTTON_NEGATIVE, enabled ? "Disattiva" : "Annulla", (d, w) -> {
@@ -1136,38 +1245,19 @@ public class MainActivity extends Activity {
     private void scheduleWeeklyAutomationIfEnabled() {
         android.content.SharedPreferences prefs = getSharedPreferences(PREFS_APP, MODE_PRIVATE);
         if (!prefs.getBoolean(PREF_AUTO_WEEKLY, false)) return;
-        int hour = prefs.getInt(PREF_AUTO_HOUR, 18);
-        int minute = prefs.getInt(PREF_AUTO_MINUTE, 30);
-        Calendar next = Calendar.getInstance();
-        next.set(Calendar.SECOND, 0);
-        next.set(Calendar.MILLISECOND, 0);
-        next.set(Calendar.HOUR_OF_DAY, hour);
-        next.set(Calendar.MINUTE, minute);
-        int day = next.get(Calendar.DAY_OF_WEEK);
-        int daysUntilFriday = (Calendar.FRIDAY - day + 7) % 7;
-        if (daysUntilFriday == 0 && next.getTimeInMillis() <= System.currentTimeMillis()) daysUntilFriday = 7;
-        next.add(Calendar.DAY_OF_YEAR, daysUntilFriday);
-
-        AlarmManager am = (AlarmManager) getSystemService(ALARM_SERVICE);
-        if (am == null) return;
-        Intent intent = new Intent(this, FantaFormationScheduleReceiver.class);
-        intent.setAction(ACTION_SCHEDULED_AUTO);
-        PendingIntent pi = PendingIntent.getBroadcast(this, WEEKLY_ALARM_REQUEST, intent,
-                PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= 23 ? PendingIntent.FLAG_IMMUTABLE : 0));
-        am.cancel(pi);
-        if (Build.VERSION.SDK_INT >= 23) am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, next.getTimeInMillis(), pi);
-        else am.set(AlarmManager.RTC_WAKEUP, next.getTimeInMillis(), pi);
-        Log.d("FANTA_DEBUG", "Automazione programmata per venerdì " + next.getTime());
+        if (!AutomationScheduler.scheduleWeekly(this)
+                && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            try {
+                Intent settings = new Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM);
+                settings.setData(android.net.Uri.parse("package:" + getPackageName()));
+                startActivity(settings);
+            } catch (Throwable ignored) {
+            }
+        }
     }
 
     private void cancelWeeklyAutomation() {
-        AlarmManager am = (AlarmManager) getSystemService(ALARM_SERVICE);
-        if (am == null) return;
-        Intent intent = new Intent(this, FantaFormationScheduleReceiver.class);
-        intent.setAction(ACTION_SCHEDULED_AUTO);
-        PendingIntent pi = PendingIntent.getBroadcast(this, WEEKLY_ALARM_REQUEST, intent,
-                PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= 23 ? PendingIntent.FLAG_IMMUTABLE : 0));
-        am.cancel(pi);
+        AutomationScheduler.cancel(this);
     }
 
     private void startFullAutomaticFlow() {
@@ -1309,81 +1399,41 @@ public class MainActivity extends Activity {
 
         detectedTeams = detectTeams(result);
         detectedTeamNames = new ArrayList<>(detectedTeams.keySet());
-        setupTeamSpinner();
 
         String savedTeam = getSharedPreferences(PREFS_APP, MODE_PRIVATE)
-                .getString(PREF_SELECTED_TEAM, "").trim();
+                .getString(PREF_SELECTED_TEAM, "")
+                .trim();
 
-        if (!savedTeam.isEmpty()) {
-            String matchedSavedTeam = null;
-            for (String teamName : detectedTeamNames) {
-                if (normalize(teamName).equals(normalize(savedTeam))) {
-                    matchedSavedTeam = teamName;
-                    break;
+        if (!detectedTeams.isEmpty()) {
+            setupTeamSpinner();
+
+            if (!savedTeam.isEmpty()) {
+                for (String teamName : detectedTeamNames) {
+                    if (normalize(teamName).equals(normalize(savedTeam))) {
+                        selectTeamInSpinner(teamName);
+                        return;
+                    }
                 }
             }
-            if (matchedSavedTeam != null) {
-                selectTeamInSpinner(matchedSavedTeam);
+
+            if (detectedTeamNames.size() == 1) {
+                selectTeamInSpinner(detectedTeamNames.get(0));
                 return;
             }
+
+            showTeamSelectionDialog(detectedTeams);
+            return;
         }
 
-            String rowText =
-                    row != null
-                            ? row.text()
-                            : "";
-
-            OfficialPlayer player =
-                    new OfficialPlayer();
-
-            player.name =
-                    name;
-
-            player.profileUrl =
-                    href;
-
-            player.team =
-                    extractTeam(
-                            rowText
-                    );
-
-            player.classicQuote =
-                    extractClassicQuote(
-                            row
-                    );
-
-            player.fvm =
-                    extractFvm(
-                            row
-                    );
-
-            player.role =
-                    extractRoleFromPlayerElement(
-                            link,
-                            row
-                    );
-
-            if (player.role.isEmpty()) {
-
-                player.role =
-                        extractRoleFromAttributes(
-                                row
-                        );
-            }
-
-            String key =
-                    normalize(
-                            player.name
-                    );
-
-        // Nessuna colonna squadra riconosciuta: manteniamo il comportamento di fallback.
         selectedTeamName = "";
         formazione = new ArrayList<>(result);
         saveFormation(formazione);
         hideTeamSpinner();
         showSavedFormationSummary();
         setStepState("EXCEL", 2, "Rosa caricata: " + countRealPlayers(formazione) + " giocatori");
-        Toast.makeText(this, "Excel caricato. Non ho trovato una colonna squadra riconoscibile.", Toast.LENGTH_LONG).show();
+        Toast.makeText(this,
+                "Excel caricato. Non ho trovato più rose separate: uso il contenuto completo.",
+                Toast.LENGTH_LONG).show();
     }
 
     private void setupTeamSpinner() {
@@ -1555,32 +1605,17 @@ public class MainActivity extends Activity {
         return "";
     }
 
-    private String extractTeam(
-            String text
-    ) {
-
-        if (text == null) {
-            return "";
-        }
-        return new ArrayAdapter<String>(this, android.R.layout.simple_spinner_item, labels) {
-            @Override public View getView(int position, View convertView, android.view.ViewGroup parent) {
-                TextView v = (TextView) super.getView(position, convertView, parent);
-                v.setTextColor(Color.WHITE);
-                v.setTextSize(15);
-                v.setGravity(Gravity.CENTER_VERTICAL);
-                v.setPadding(dp(14), 0, dp(10), 0);
-                return v;
-            }
-            @Override public View getDropDownView(int position, View convertView, android.view.ViewGroup parent) {
-                TextView v = (TextView) super.getDropDownView(position, convertView, parent);
-                v.setTextColor(Color.WHITE);
-                v.setTextSize(15);
-                v.setGravity(Gravity.CENTER_VERTICAL);
-                v.setPadding(dp(16), dp(14), dp(16), dp(14));
-                v.setBackgroundColor(Color.rgb(22, 27, 35));
-                return v;
-            }
+    private String extractTeam(String text) {
+        if (text == null || text.trim().isEmpty()) return "";
+        String upper = text.toUpperCase(Locale.ROOT);
+        String[] teams = {
+                "INT", "COM", "MIL", "ROM", "NAP", "JUV", "ATA", "BOL", "LAZ", "FIO",
+                "PAR", "GEN", "MON", "TOR", "UDI", "SAS", "LEC", "CAG", "VEN", "FRO"
         };
+        for (String team : teams) {
+            if (upper.matches(".*\\b" + Pattern.quote(team) + "\\b.*")) return team;
+        }
+        return "";
     }
 
     private void selectTeamInSpinner(String teamName) {
@@ -1984,6 +2019,7 @@ public class MainActivity extends Activity {
 
                 ArrayList<Player> players = buildPlayers(officialPlayers, probabilities, gazzetta, sky, statistics, newsSignals, adviceSignals, matchContexts);
                 lastParsedPlayers = players;
+                agentDecision = buildAgentDecision(players, probabilities, statistics, newsSignals, adviceSignals);
 
                 FormationResult best = calculateBestFormation(players);
                 currentBestResult = best;
@@ -2019,6 +2055,10 @@ public class MainActivity extends Activity {
                 "Fonti raggiunte: " + online + "/" + total + "\n" +
                 "Giocatori con statistiche: " + statPlayers + "\n" +
                 "Giocatori con probabili: " + probablePlayers + "\n\n" +
+                "Agent: " + (agentDecision != null ? agentDecision.mode : "EQUILIBRATO") +
+                " • dati stats " + (agentDecision != null ? agentDecision.statsCoverage : 0) +
+                " • probabili " + (agentDecision != null ? agentDecision.probabilityCoverage : 0) +
+                " • news " + (agentDecision != null ? agentDecision.newsCoverage : 0) + "\n" +
                 "Il motore AI locale confronta tutti i moduli disponibili e prova combinazioni alternative dei migliori candidati, pesando affidabilità, bonus e rischio titolarità. " +
                 "Il punteggio combina dati stagionali, forma recente, probabilità di impiego, consigli Fantacalcio, bonus, rigori, avversario e fattore casa. A parità di qualità privilegia centrocampo/attacco e limita la difesa a 5.");
         onlineView.setTextColor(Color.rgb(165, 190, 210));
@@ -2265,31 +2305,6 @@ public class MainActivity extends Activity {
         return result;
     }
 
-    private String roleFromText(String text) {
-        if (text == null) return "";
-        String normalized = normalize(text);
-
-        if (normalized.contains("portiere")) return "P";
-        if (normalized.contains("difensore")) return "D";
-        if (normalized.contains("centrocampista")) return "C";
-        if (normalized.contains("attaccante")) return "A";
-
-        if (normalized.matches(".*\\bp\\b.*")) return "P";
-        if (normalized.matches(".*\\bd\\b.*")) return "D";
-        if (normalized.matches(".*\\bc\\b.*")) return "C";
-        if (normalized.matches(".*\\ba\\b.*")) return "A";
-
-        return "";
-    }
-
-    private String extractTeam(String text) {
-        if (text == null) return "";
-        String upper = text.toUpperCase(Locale.ROOT);
-        String[] teams = {"INT", "COM", "MIL", "ROM", "NAP", "JUV", "ATA", "BOL", "LAZ", "FIO", "PAR", "GEN", "MON", "TOR", "UDI", "SAS", "LEC", "CAG", "VEN", "FRO"};
-        for (String team : teams) if (upper.contains(team)) return team;
-        return "";
-    }
-
     private Map<String, ProbabilityInfo> parseFantacalcioProbabili(String html) {
         Map<String, ProbabilityInfo> result = new HashMap<>();
         if (html == null || html.isEmpty()) return result;
@@ -2364,74 +2379,49 @@ public class MainActivity extends Activity {
         return a.contains(b);
     }
 
-    private ArrayList<Player> buildPlayers(Map<String, OfficialPlayer> official, Map<String, ProbabilityInfo> probabilities, Map<String, Integer> gazzetta, Map<String, Integer> sky, Map<String, AdvancedStats> statistics, Map<String, NewsSignal> newsSignals, Map<String, AdviceSignal> adviceSignals, Map<String, MatchContext> matchContexts) {
+    private ArrayList<Player> buildPlayers(
+            Map<String, OfficialPlayer> official,
+            Map<String, ProbabilityInfo> probabilities,
+            Map<String, Integer> gazzetta,
+            Map<String, Integer> sky,
+            Map<String, AdvancedStats> statistics,
+            Map<String, NewsSignal> newsSignals,
+            Map<String, AdviceSignal> adviceSignals,
+            Map<String, MatchContext> matchContexts) {
+
         ArrayList<Player> result = new ArrayList<>();
         if (formazione == null) return result;
 
         for (String[] row : formazione) {
-            if (row.length < 2) continue;
-            String excelName = row[1];
-            if (excelName == null || excelName.trim().isEmpty()) continue;
+            if (row == null || row.length < 2) continue;
+
+            String excelName = cleanName(row[1]);
+            if (excelName.isEmpty() || isLikelyHeader(excelName)) continue;
 
             String normalizedExcel = normalize(excelName);
             String cachedRole = roleCache.getRole(normalizedExcel);
             OfficialPlayer officialPlayer = findOfficialPlayer(excelName, official);
 
             if (officialPlayer == null) {
-
-                String normalizedName =
-                        normalize(excelName);
-
-                String cachedRole =
-                        roleCache.getRole(
-                                normalizedName
-                        );
-
-                Player player =
-                        new Player(
-                                excelName,
-                                excelName,
-                                "",
-                                cachedRole,
-                                0,
-                                0,
-                                0,
-                                0,
-                                false,
-                                false
-                        );
-
+                Player player = new Player(
+                        excelName,
+                        excelName,
+                        "",
+                        cachedRole,
+                        0,
+                        0,
+                        0,
+                        0,
+                        false,
+                        false
+                );
                 result.add(player);
                 continue;
             }
 
-            String normalizedOfficialName =
-                    normalize(
-                            officialPlayer.name
-                    );
-
-            String role =
-                    officialPlayer.role;
-
-            if (role.isEmpty()) {
-
-                String cachedRole =
-                        roleCache.getRole(
-                                normalizedOfficialName
-                        );
-
-                if (!cachedRole.isEmpty()) {
-                    role = cachedRole;
-                }
-            }
-
-            ProbabilityInfo probability =
-                    probabilities.get(
-                            normalizedOfficialName
-                    );
-
+            String normalizedOfficialName = normalize(officialPlayer.name);
             String role = !cachedRole.isEmpty() ? cachedRole : officialPlayer.role;
-            // Se l'utente non ha mai sovrascritto il ruolo, salva come default quello rilevato da Leghe/Fantacalcio.
+
             if (cachedRole.isEmpty() && !officialPlayer.role.isEmpty()) {
                 roleCache.setRole(normalizedExcel, officialPlayer.role);
                 roleCache.setRole(normalizedOfficialName, officialPlayer.role);
@@ -2445,24 +2435,45 @@ public class MainActivity extends Activity {
             boolean bench = probability != null && probability.bench;
 
             int externalAgreement = 0;
-            if (gazzetta.containsKey(normalizedOfficialName) || gazzetta.containsKey(normalizedExcel)) externalAgreement++;
-            if (sky.containsKey(normalizedOfficialName) || sky.containsKey(normalizedExcel)) externalAgreement++;
+            if (gazzetta.containsKey(normalizedOfficialName) || gazzetta.containsKey(normalizedExcel)) {
+                externalAgreement++;
+            }
+            if (sky.containsKey(normalizedOfficialName) || sky.containsKey(normalizedExcel)) {
+                externalAgreement++;
+            }
 
             AdvancedStats stats = statistics.get(normalizedOfficialName);
             if (stats == null) stats = statistics.get(normalizedExcel);
+
             NewsSignal news = newsSignals.get(normalizedOfficialName);
             if (news == null) news = newsSignals.get(normalizedExcel);
+
             AdviceSignal advice = adviceSignals.get(normalizedOfficialName);
             if (advice == null) advice = adviceSignals.get(normalizedExcel);
+
             MatchContext context = matchContexts.get(normalize(officialPlayer.team));
 
-            Player player = new Player(excelName, officialPlayer.name, officialPlayer.team, role, officialPlayer.classicQuote, officialPlayer.fvm, probable, externalAgreement, starter, bench, stats, news, context, advice);
+            Player player = new Player(
+                    excelName,
+                    officialPlayer.name,
+                    officialPlayer.team,
+                    role,
+                    officialPlayer.classicQuote,
+                    officialPlayer.fvm,
+                    probable,
+                    externalAgreement,
+                    starter,
+                    bench,
+                    stats,
+                    news,
+                    context,
+                    advice
+            );
             result.add(player);
         }
 
-            if (gazzetta.containsKey(
-                    normalizedOfficialName
-            )) {
+        return result;
+    }
 
     private Map<String, AdvancedStats> parseAdvancedStats(String html) {
         Map<String, AdvancedStats> result = new HashMap<>();
@@ -2909,6 +2920,138 @@ public class MainActivity extends Activity {
         boolean valid = false;
     }
 
+    private static class AgentDecision {
+        final String mode;
+        final double riskPenalty;
+        final double offensiveBias;
+        final int statsCoverage;
+        final int probabilityCoverage;
+        final int newsCoverage;
+        final int adviceCoverage;
+
+        AgentDecision(String mode,
+                      double riskPenalty,
+                      double offensiveBias,
+                      int statsCoverage,
+                      int probabilityCoverage,
+                      int newsCoverage,
+                      int adviceCoverage) {
+            this.mode = mode;
+            this.riskPenalty = riskPenalty;
+            this.offensiveBias = offensiveBias;
+            this.statsCoverage = statsCoverage;
+            this.probabilityCoverage = probabilityCoverage;
+            this.newsCoverage = newsCoverage;
+            this.adviceCoverage = adviceCoverage;
+        }
+    }
+
+    /**
+     * Scout/decision layer: non inventa dati e non richiede un LLM esterno.
+     * Usa la copertura reale delle fonti per scegliere una strategia più prudente
+     * o più orientata a bonus/forma prima di confrontare i moduli.
+     */
+    private AgentDecision buildAgentDecision(
+            ArrayList<Player> players,
+            Map<String, ProbabilityInfo> probabilities,
+            Map<String, AdvancedStats> statistics,
+            Map<String, NewsSignal> newsSignals,
+            Map<String, AdviceSignal> adviceSignals) {
+
+        int total = players == null ? 0 : players.size();
+        if (total == 0) {
+            return new AgentDecision("DATI SCARSI", 5.0, 0.0, 0, 0, 0, 0);
+        }
+
+        int statsCoverage = 0;
+        int probabilityCoverage = 0;
+        int newsCoverage = 0;
+        int adviceCoverage = 0;
+
+        for (Player player : players) {
+            String key = normalize(
+                    player.officialName == null || player.officialName.isEmpty()
+                            ? player.excelName
+                            : player.officialName
+            );
+
+            AdvancedStats stats = statistics == null ? null : statistics.get(key);
+            if (stats != null && (stats.appearances > 0 || stats.recentDataAvailable)) statsCoverage++;
+
+            ProbabilityInfo probability = probabilities == null ? null : probabilities.get(key);
+            if (probability != null && probability.percentage > 0) probabilityCoverage++;
+
+            if (newsSignals != null && newsSignals.containsKey(key)) newsCoverage++;
+            if (adviceSignals != null && adviceSignals.containsKey(key)) adviceCoverage++;
+        }
+
+        double statsRatio = statsCoverage / (double) total;
+        double probabilityRatio = probabilityCoverage / (double) total;
+        double newsRatio = newsCoverage / (double) total;
+
+        String mode;
+        double offensiveBias;
+
+        if (probabilityRatio < 0.45) {
+            mode = "PRUDENTE";
+            offensiveBias = 0.30;
+        } else if (statsRatio >= 0.60 && newsRatio >= 0.35) {
+            mode = "BONUS + FORMA";
+            offensiveBias = 1.15;
+        } else {
+            mode = "EQUILIBRATO";
+            offensiveBias = 0.70;
+        }
+
+        double riskPenalty = probabilityRatio >= 0.75
+                ? 3.0
+                : probabilityRatio >= 0.45 ? 4.0 : 5.0;
+
+        return new AgentDecision(
+                mode,
+                riskPenalty,
+                offensiveBias,
+                statsCoverage,
+                probabilityCoverage,
+                newsCoverage,
+                adviceCoverage
+        );
+    }
+
+    private double formationAgentAdjustment(FormationResult result) {
+        if (result == null || agentDecision == null) return 0.0;
+
+        int d = result.defenders.size();
+        int c = result.midfielders.size();
+        int a = result.attackers.size();
+
+        double adjustment = (a * agentDecision.offensiveBias)
+                + (c * agentDecision.offensiveBias * 0.35)
+                - (d * 0.12);
+
+        if ("PRUDENTE".equals(agentDecision.mode)) {
+            if (d >= 4) adjustment += 1.2;
+            if (a >= 3) adjustment -= 0.8;
+        } else if ("BONUS + FORMA".equals(agentDecision.mode)) {
+            if (a >= 3) adjustment += 2.4;
+            if (c >= 4) adjustment += 0.9;
+        }
+
+        ArrayList<Player> starters = new ArrayList<>();
+        starters.addAll(result.goalkeeper);
+        starters.addAll(result.defenders);
+        starters.addAll(result.midfielders);
+        starters.addAll(result.attackers);
+
+        int uncertain = 0;
+        for (Player player : starters) {
+            if (player != null && player.probable > 0 && player.probable < 65) uncertain++;
+        }
+        adjustment -= uncertain * agentDecision.riskPenalty * 0.18;
+
+        return adjustment;
+    }
+
     /**
      * V16 AI Formation Engine.
      * Non si limita a prendere i primi giocatori per ruolo: prova combinazioni
@@ -2924,6 +3067,7 @@ public class MainActivity extends Activity {
         for (String module : modules) {
             FormationResult result = calculateFormation(module, players);
             if (!result.valid) continue;
+            result.score += formationAgentAdjustment(result);
             if (best == null || result.score > best.score) best = result;
         }
 
@@ -3141,178 +3285,54 @@ public class MainActivity extends Activity {
         return result;
     }
 
-        ArrayList<Player> playersWithoutRole =
-                new ArrayList<>();
-
-        for (Player player :
-                players) {
-
     private void displayResult(ArrayList<Player> players, FormationResult best) {
+        if (players == null) return;
+
         StringBuilder sb = new StringBuilder();
-        sb.append("ANALISI ONLINE + AI COMPLETATA\n==============================\n\nRUOLI + DATI WEB + CONTESTO GIORNATA + OTTIMIZZATORE AI\n\n");
+        sb.append("ANALISI ONLINE + AI COMPLETATA\n")
+                .append("==============================\n\n")
+                .append("RUOLI + DATI WEB + CONTESTO GIORNATA + OTTIMIZZATORE AI\n\n");
 
         ArrayList<Player> playersWithoutRole = new ArrayList<>();
 
         for (Player player : players) {
             sb.append(player.excelName).append(" → ");
-
+            if (player.role == null || player.role.isEmpty()) {
+                sb.append("RUOLO DA ASSEGNARE");
                 playersWithoutRole.add(player);
-
             } else {
                 sb.append(roleName(player.role));
             }
 
             sb.append("\n");
-
-            if (!player.officialName.equals(player.excelName)) {
+            if (player.officialName != null && !player.officialName.equals(player.excelName)) {
                 sb.append("   Nome ufficiale: ").append(player.officialName).append("\n");
             }
-            if (!player.team.isEmpty()) {
+            if (player.team != null && !player.team.isEmpty()) {
                 sb.append("   Squadra: ").append(player.team).append("\n");
             }
 
-            sb.append("   Probabile: ").append(player.probable).append("%\n");
-            sb.append("   FVM: ").append(player.fvm).append("\n");
-            sb.append("   Conferme Gazzetta/Sky: ").append(player.externalAgreement).append("/2\n");
-            sb.append("   SCORE: ").append(String.format(Locale.US, "%.1f", player.score)).append(" punti • Affidabilità ").append(String.format(Locale.US, "%.0f%%", player.confidence));
-            if (!player.opponent.isEmpty()) sb.append(" • vs ").append(player.opponent);
-            sb.append("\n");
-            sb.append("   Motivo: ").append(player.explanation).append("\n");
-            if (player.recentForm > 0) sb.append("   Forma recente: ").append(String.format(Locale.US, "%.1f/100", player.recentForm)).append("\n");
-            sb.append("   Avversario: ").append(player.opponent.isEmpty() ? "non disponibile" : player.opponent).append("\n\n");
+            sb.append("   Probabile: ").append(player.probable).append("%\n")
+                    .append("   FVM: ").append(player.fvm).append("\n")
+                    .append("   Conferme Gazzetta/Sky: ").append(player.externalAgreement).append("/2\n")
+                    .append("   SCORE: ").append(String.format(Locale.US, "%.1f", player.score))
+                    .append(" punti • Affidabilità ")
+                    .append(String.format(Locale.US, "%.0f%%", player.confidence));
+
+            if (player.opponent != null && !player.opponent.isEmpty()) {
+                sb.append(" • vs ").append(player.opponent);
+            }
+
+            sb.append("\n   Motivo: ").append(player.explanation == null ? "" : player.explanation).append("\n");
+            if (player.recentForm > 0) {
+                sb.append("   Forma recente: ")
+                        .append(String.format(Locale.US, "%.1f/100", player.recentForm))
+                        .append("\n");
+            }
+            sb.append("   Avversario: ")
+                    .append(player.opponent == null || player.opponent.isEmpty() ? "non disponibile" : player.opponent)
+                    .append("\n\n");
         }
-
-        sb.append("\n");
-
-        if (!playersWithoutRole.isEmpty()) {
-
-            showRoleAssignmentDialog(
-                    playersWithoutRole,
-                    sb,
-                    best
-            );
-
-            return;
-        }
-
-        displayFormationResult(sb, best);
-    }
-
-    private void showRoleAssignmentDialog(
-            ArrayList<Player> playersWithoutRole,
-            StringBuilder previousResult,
-            FormationResult best
-    ) {
-
-        int playerIndex = 0;
-
-        showRoleDialogForPlayer(
-                playersWithoutRole,
-                playerIndex,
-                previousResult,
-                best
-        );
-    }
-
-    private void showRoleDialogForPlayer(
-            ArrayList<Player> playersWithoutRole,
-            int playerIndex,
-            StringBuilder previousResult,
-            FormationResult best
-    ) {
-
-        if (playerIndex >= playersWithoutRole.size()) {
-
-            displayFormationResult(
-                    previousResult,
-                    best
-            );
-
-            return;
-        }
-
-        Player player =
-                playersWithoutRole.get(
-                        playerIndex
-                );
-
-        String[] roleOptions = {
-                "PORTIERE (P)",
-                "DIFENSORE (D)",
-                "CENTROCAMPISTA (C)",
-                "ATTACCANTE (A)"
-        };
-
-        AlertDialog.Builder builder =
-                new AlertDialog.Builder(
-                        MainActivity.this
-                );
-
-        builder.setTitle(
-                "Assegna ruolo a: " +
-                player.excelName
-        );
-
-        builder.setItems(
-                roleOptions,
-                (dialog, which) -> {
-
-                    String selectedRole = "";
-
-                    switch (which) {
-
-                        case 0:
-                            selectedRole = "P";
-                            break;
-
-                        case 1:
-                            selectedRole = "D";
-                            break;
-
-                        case 2:
-                            selectedRole = "C";
-                            break;
-
-                        case 3:
-                            selectedRole = "A";
-                            break;
-                    }
-
-                    String normalizedName =
-                            normalize(
-                                    player.officialName.isEmpty()
-                                            ? player.excelName
-                                            : player.officialName
-                            );
-
-                    roleCache.setRole(
-                            normalizedName,
-                            selectedRole
-                    );
-
-                    player.role =
-                            selectedRole;
-
-                    showRoleDialogForPlayer(
-                            playersWithoutRole,
-                            playerIndex + 1,
-                            previousResult,
-                            best
-                    );
-                }
-        );
-
-        builder.setCancelable(false);
-
-        builder.show();
-    }
-
-    private void displayFormationResult(
-            StringBuilder sb,
-            FormationResult best
-    ) {
-
-        if (!best.valid) {
 
         currentBestResult = best;
         if (best != null && best.valid) {
@@ -3321,11 +3341,74 @@ public class MainActivity extends Activity {
             sendToLegheButton.setVisibility(View.GONE);
         }
 
+        if (!playersWithoutRole.isEmpty()) {
+            setStepState("RUOLI", 1, "Servono " + playersWithoutRole.size() + " ruoli");
+            showRoleAssignmentDialog(playersWithoutRole, players);
+            return;
+        }
+
+        setStepState("RUOLI", 2, "Ruoli verificati");
         displayFormationResult(sb, best);
     }
 
     private void showRoleAssignmentDialog(ArrayList<Player> playersWithoutRole, ArrayList<Player> allPlayers) {
         showRoleDialogForPlayer(playersWithoutRole, 0, allPlayers);
+    }
+
+    private void showRoleDialogForPlayer(
+            ArrayList<Player> playersWithoutRole,
+            int playerIndex,
+            ArrayList<Player> allPlayers) {
+
+        if (playerIndex >= playersWithoutRole.size()) {
+            FormationResult recalculatedBest = calculateBestFormation(allPlayers);
+            currentBestResult = recalculatedBest;
+
+            StringBuilder resultBuilder = new StringBuilder();
+            for (Player player : allPlayers) {
+                resultBuilder.append(player.excelName)
+                        .append(" → ")
+                        .append(roleName(player.role))
+                        .append("\n");
+            }
+
+            setStepState("RUOLI", 2, "Ruoli verificati");
+            displayFormationResult(resultBuilder, recalculatedBest);
+
+            if (autoRunRequested && recalculatedBest != null
+                    && recalculatedBest.valid
+                    && credentialsManager.hasCredentials()) {
+                autoRunRequested = false;
+                openLegheWebViewDialog();
+            }
+            return;
+        }
+
+        if (isFinishing()) return;
+
+        Player player = playersWithoutRole.get(playerIndex);
+        String[] roleOptions = {
+                "P  —  Portiere",
+                "D  —  Difensore",
+                "C  —  Centrocampista",
+                "A  —  Attaccante"
+        };
+
+        AlertDialog.Builder builder = new AlertDialog.Builder(MainActivity.this);
+        builder.setTitle("Ruolo di " + player.excelName);
+
+        int checked = roleIndex(getSavedOrDetectedRole(player));
+        builder.setSingleChoiceItems(roleOptions, checked, (dialog, which) -> {
+            String selectedRole = roleFromIndex(which);
+            saveRoleForPlayer(player, selectedRole);
+            dialog.dismiss();
+
+            // Passaggio immediato al successivo: nessun dialog intermedio.
+            showRoleDialogForPlayer(playersWithoutRole, playerIndex + 1, allPlayers);
+        });
+
+        builder.setNegativeButton("Annulla", null);
+        builder.show();
     }
 
     private int roleIndex(String role) {
@@ -3346,52 +3429,31 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void showRoleDialogForPlayer(ArrayList<Player> playersWithoutRole, int playerIndex, ArrayList<Player> allPlayers) {
-        if (playerIndex >= playersWithoutRole.size()) {
-            FormationResult recalculatedBest = calculateBestFormation(allPlayers);
-            currentBestResult = recalculatedBest;
-            displayResult(allPlayers, recalculatedBest);
-            setStepState("RUOLI", 2, "Ruoli verificati");
-            if (autoRunRequested && recalculatedBest != null && recalculatedBest.valid && credentialsManager.hasCredentials()) {
-                autoRunRequested = false;
-                openLegheWebViewDialog();
-            }
-            return;
-        }
-
-        if (isFinishing()) return;
-
-        Player player = playersWithoutRole.get(playerIndex);
-        String[] roleOptions = {"P  —  Portiere", "D  —  Difensore", "C  —  Centrocampista", "A  —  Attaccante"};
-        int checked = roleIndex(getSavedOrDetectedRole(player));
-
-        AlertDialog.Builder builder = new AlertDialog.Builder(MainActivity.this);
-        builder.setTitle("Ruolo di " + player.excelName);
-        builder.setSingleChoiceItems(roleOptions, checked, (dialog, which) -> {
-            String selectedRole = roleFromIndex(which);
-            saveRoleForPlayer(player, selectedRole);
-            dialog.dismiss();
-            showRoleDialogForPlayer(playersWithoutRole, playerIndex + 1, allPlayers);
-        });
-        builder.setNegativeButton("Annulla", null);
-        builder.show();
-    }
-
     private String getSavedOrDetectedRole(Player player) {
+        if (player == null) return "";
+
         String keyExcel = normalize(player.excelName);
         String role = roleCache.getRole(keyExcel);
         if (!role.isEmpty()) return role;
 
-        String keyOfficial = normalize(player.officialName == null || player.officialName.isEmpty() ? player.excelName : player.officialName);
-        role = roleCache.getRole(keyOfficial);
+        String official = player.officialName == null || player.officialName.isEmpty()
+                ? player.excelName
+                : player.officialName;
+        role = roleCache.getRole(normalize(official));
         if (!role.isEmpty()) return role;
 
         return player.role == null ? "" : player.role;
     }
 
     private void saveRoleForPlayer(Player player, String selectedRole) {
+        if (player == null) return;
+
         String normalizedExcelName = normalize(player.excelName);
-        String normalizedOfficialName = normalize(player.officialName == null || player.officialName.isEmpty() ? player.excelName : player.officialName);
+        String normalizedOfficialName = normalize(
+                player.officialName == null || player.officialName.isEmpty()
+                        ? player.excelName
+                        : player.officialName
+        );
 
         roleCache.setRole(normalizedExcelName, selectedRole);
         roleCache.setRole(normalizedOfficialName, selectedRole);
@@ -3410,11 +3472,9 @@ public class MainActivity extends Activity {
         for (String[] row : formazione) {
             if (row.length > 1 && row[1] != null && !row[1].trim().isEmpty()) {
                 String name = row[1].trim();
-                String key = normalize(name);
                 String currentRole = getRoleForExcelName(name);
 
-                String label = name + (currentRole.isEmpty() ? " [—]" : " [" + currentRole + "]");
-                playerNames.add(label);
+                playerNames.add(name + (currentRole.isEmpty() ? " [—]" : " [" + currentRole + "]"));
                 playerKeys.add(name);
             }
         }
@@ -3429,10 +3489,8 @@ public class MainActivity extends Activity {
         AlertDialog.Builder builder = new AlertDialog.Builder(this);
         builder.setTitle("Seleziona giocatore da modificare");
         builder.setItems(playerNames.toArray(new String[0]), (dialog, which) -> {
-            String selectedPlayerName = playerKeys.get(which);
-            promptChangeRoleForPlayer(selectedPlayerName);
+            promptChangeRoleForPlayer(playerKeys.get(which));
         });
-
         builder.setNegativeButton("Annulla", null);
         builder.show();
     }
@@ -3443,17 +3501,24 @@ public class MainActivity extends Activity {
 
         if (lastParsedPlayers != null) {
             String key = normalize(playerName);
-            for (Player p : lastParsedPlayers) {
-                if (normalize(p.excelName).equals(key)) {
-                    return p.role == null ? "" : p.role;
+            for (Player player : lastParsedPlayers) {
+                if (normalize(player.excelName).equals(key)) {
+                    return player.role == null ? "" : player.role;
                 }
             }
         }
+
         return "";
     }
 
     private void promptChangeRoleForPlayer(String playerName) {
-        String[] roleOptions = {"P  —  Portiere", "D  —  Difensore", "C  —  Centrocampista", "A  —  Attaccante"};
+        String[] roleOptions = {
+                "P  —  Portiere",
+                "D  —  Difensore",
+                "C  —  Centrocampista",
+                "A  —  Attaccante"
+        };
+
         String currentRole = getRoleForExcelName(playerName);
         int checked = roleIndex(currentRole);
 
@@ -3463,21 +3528,23 @@ public class MainActivity extends Activity {
         builder.setTitle("Ruolo di " + playerName);
         builder.setSingleChoiceItems(roleOptions, checked, (dialog, which) -> {
             String selectedRole = roleFromIndex(which);
-            String key = normalize(playerName);
-            roleCache.setRole(key, selectedRole);
+            roleCache.setRole(normalize(playerName), selectedRole);
 
             if (lastParsedPlayers != null) {
-                for (Player p : lastParsedPlayers) {
-                    if (normalize(p.excelName).equals(key)) {
-                        saveRoleForPlayer(p, selectedRole);
+                for (Player player : lastParsedPlayers) {
+                    if (normalize(player.excelName).equals(normalize(playerName))) {
+                        saveRoleForPlayer(player, selectedRole);
                     }
                 }
+
                 FormationResult newBest = calculateBestFormation(lastParsedPlayers);
                 currentBestResult = newBest;
                 displayResult(lastParsedPlayers, newBest);
             }
 
-            Toast.makeText(this, "Ruolo aggiornato per " + playerName + ": " + selectedRole, Toast.LENGTH_SHORT).show();
+            Toast.makeText(this,
+                    "Ruolo aggiornato per " + playerName + ": " + selectedRole,
+                    Toast.LENGTH_SHORT).show();
             dialog.dismiss();
         });
 
@@ -3514,7 +3581,7 @@ public class MainActivity extends Activity {
         card.addView(head);
 
         TextView sub = new TextView(this);
-        sub.setText("FORMAZIONE OTTIMALE  •  ALGORITMO V5 ONLINE");
+        sub.setText("FORMAZIONE OTTIMALE  •  AGENT LOCALE + DATI ONLINE");
         sub.setTextColor(Color.rgb(120, 220, 150));
         sub.setTextSize(13);
         sub.setPadding(0, dp(6), 0, dp(16));
@@ -3711,21 +3778,6 @@ public class MainActivity extends Activity {
         normalized = normalized.replaceAll("[^a-z0-9 ]", " ");
         normalized = normalized.replaceAll("\\s+", " ").trim();
         return normalized;
-    }
-    private static class PlayerRoleCache {
-        private final android.content.SharedPreferences prefs;
-        PlayerRoleCache(Context c) { prefs = c.getSharedPreferences("player_roles", MODE_PRIVATE); }
-        String getRole(String key) { return key == null ? "" : prefs.getString(key, ""); }
-        void setRole(String key, String role) { if (key != null && !key.isEmpty()) prefs.edit().putString(key, role == null ? "" : role).apply(); }
-    }
-
-    private static class CredentialsManager {
-        private final android.content.SharedPreferences prefs;
-        CredentialsManager(Context c) { prefs = c.getSharedPreferences("credentials", MODE_PRIVATE); }
-        String getUsername() { return prefs.getString("username", ""); }
-        String getPassword() { return prefs.getString("password", ""); }
-        boolean hasCredentials() { return !getUsername().trim().isEmpty() && !getPassword().isEmpty(); }
-        void saveCredentials(String user, String pass) { prefs.edit().putString("username", user == null ? "" : user).putString("password", pass == null ? "" : pass).apply(); }
     }
 
 }

@@ -56,7 +56,7 @@ public class FantaAutomationService extends Service {
                         getPackageName() + ":FantaFormationService"
                 );
                 wakeLock.setReferenceCounted(false);
-                wakeLock.acquire(2 * 60 * 60 * 1000L);
+                wakeLock.acquire(45 * 60 * 1000L);
             }
         } catch (Throwable ignored) {
         }
