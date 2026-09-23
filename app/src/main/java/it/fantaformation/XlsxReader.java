@@ -3,361 +3,198 @@ package it.fantaformation;
 import android.content.Context;
 import android.net.Uri;
 
-import org.w3c.dom.Document;
-import org.w3c.dom.Node;
-import org.w3c.dom.NodeList;
+import org.xmlpull.v1.XmlPullParser;
+import org.xmlpull.v1.XmlPullParserFactory;
 
+import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.zip.ZipEntry;
-import java.util.zip.ZipInputStream;
+import java.util.zip.ZipFile;
+import java.io.File;
+import android.os.ParcelFileDescriptor;
 
-import javax.xml.parsers.DocumentBuilderFactory;
+/**
+ * Lettore XLSX minimale e indipendente da Apache POI.
+ * Mantiene le colonne vuote, quindi il formato delle rose a blocchi
+ * "Squadra | costo | vuota" viene letto senza perdere la posizione delle colonne.
+ */
+public final class XlsxReader {
+    private XlsxReader() {}
 
-public class XlsxReader {
+    public static List<String[]> read(Context context, Uri uri) throws Exception {
+        File file = null;
+        ParcelFileDescriptor pfd = context.getContentResolver().openFileDescriptor(uri, "r");
+        if (pfd == null) throw new IllegalArgumentException("Impossibile aprire il file Excel");
 
-    private static final int MAX_PLAYERS = 25;
-
-    public static List<String[]> read(
-            Context context,
-            Uri uri) throws Exception {
-
-        InputStream input =
-                context.getContentResolver()
-                        .openInputStream(uri);
-
-        if (input == null) {
-            throw new Exception("Impossibile aprire il file");
+        java.io.FileInputStream fis = new java.io.FileInputStream(pfd.getFileDescriptor());
+        byte[] data;
+        try {
+            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+            byte[] buffer = new byte[8192];
+            int n;
+            while ((n = fis.read(buffer)) != -1) out.write(buffer, 0, n);
+            data = out.toByteArray();
+        } finally {
+            try { fis.close(); } catch (Exception ignored) {}
+            try { pfd.close(); } catch (Exception ignored) {}
         }
 
-        ZipInputStream zip =
-                new ZipInputStream(input);
-
-        String sharedStringsXml = null;
-        String sheetXml = null;
-
-        ZipEntry entry;
-
-        while ((entry = zip.getNextEntry()) != null) {
-
-            String name = entry.getName();
-
-            if ("xl/sharedStrings.xml".equals(name)) {
-                sharedStringsXml = readEntry(zip);
-            }
-
-            if ("xl/worksheets/sheet1.xml".equals(name)) {
-                sheetXml = readEntry(zip);
-            }
-        }
-
-        zip.close();
-
-        if (sheetXml == null) {
-            throw new Exception("Foglio Excel non trovato");
-        }
-
-        List<String> sharedStrings =
-                parseSharedStrings(sharedStringsXml);
-
-        Document document = parseXml(sheetXml);
-
-        NodeList rows =
-                document.getElementsByTagName("row");
-
-        List<String[]> result = new ArrayList<>();
-
-        boolean insideOnePisa = false;
-
-        for (int i = 0; i < rows.getLength(); i++) {
-
-            Node row = rows.item(i);
-
-            List<String> values =
-                    getRowValues(row, sharedStrings);
-
-            if (values.isEmpty()) {
-                continue;
-            }
-
-            String firstValue =
-                    values.get(0).trim();
-
-            if (!insideOnePisa) {
-
-                if (isOnePisa(firstValue)) {
-                    insideOnePisa = true;
-                }
-
-                continue;
-            }
-
-            /*
-             * Una nuova intestazione indica
-             * l'inizio della squadra successiva.
-             */
-            if (isTeamHeader(firstValue)) {
-                break;
-            }
-
-            String player = "";
-
-            for (String value : values) {
-
-                String clean =
-                        value.trim();
-
-                if (clean.isEmpty()) {
-                    continue;
-                }
-
-                if (clean.equalsIgnoreCase("costo")) {
-                    continue;
-                }
-
-                if (isNumber(clean)) {
-                    continue;
-                }
-
-                player = clean;
-                break;
-            }
-
-            if (!player.isEmpty()) {
-
-                String cost = "";
-
-                for (String value : values) {
-
-                    String clean =
-                            value.trim();
-
-                    if (isNumber(clean)) {
-                        cost = clean;
-                        break;
-                    }
-                }
-
-                result.add(new String[]{
-                        "",
-                        player,
-                        cost
-                });
-            }
-
-            if (result.size() >= MAX_PLAYERS) {
-                break;
-            }
-        }
-
-        if (!insideOnePisa) {
-            throw new Exception(
-                    "Sezione 'One Pisa' non trovata"
-            );
-        }
-
-        if (result.isEmpty()) {
-            throw new Exception(
-                    "Nessun giocatore trovato nella sezione One Pisa"
-            );
-        }
-
-        return result;
-    }
-
-    private static boolean isOnePisa(
-            String value) {
-
-        String normalized =
-                value.toLowerCase()
-                        .replace(" ", "")
-                        .trim();
-
-        return normalized.equals("onepisa");
-    }
-
-    private static boolean isTeamHeader(
-            String value) {
-
-        String normalized =
-                value.toLowerCase()
-                        .replace(" ", "")
-                        .trim();
-
-        if (normalized.isEmpty()) {
-            return false;
-        }
-
-        if (normalized.equals("costo")) {
-            return false;
-        }
-
-        /*
-         * Evitiamo di considerare un nome giocatore
-         * come intestazione.
-         *
-         * Le intestazioni delle squadre nel tuo file
-         * non hanno un costo numerico associato.
-         */
-        return normalized.contains("farmers")
-                || normalized.contains("team")
-                || normalized.contains("skibidi")
-                || normalized.contains("fatturage");
-    }
-
-    private static boolean isNumber(
-            String value) {
+        File tmp = new File(context.getCacheDir(), "fantaformation_import.xlsx");
+        java.io.FileOutputStream fos = new java.io.FileOutputStream(tmp);
+        try { fos.write(data); } finally { fos.close(); }
 
         try {
-            Double.parseDouble(value.replace(",", "."));
-            return true;
-        } catch (Exception e) {
-            return false;
+            return readZip(tmp);
+        } finally {
+            //noinspection ResultOfMethodCallIgnored
+            tmp.delete();
         }
     }
 
-    private static List<String> getRowValues(
-            Node row,
-            List<String> sharedStrings) {
+    private static List<String[]> readZip(File file) throws Exception {
+        ZipFile zip = new ZipFile(file);
+        try {
+            List<String> sharedStrings = readSharedStrings(zip);
+            String sheetPath = findFirstWorksheet(zip);
+            if (sheetPath == null) throw new IllegalArgumentException("Foglio XLSX non trovato");
+            return readSheet(zip, sheetPath, sharedStrings);
+        } finally {
+            zip.close();
+        }
+    }
 
-        List<String> values =
-                new ArrayList<>();
+    private static String findFirstWorksheet(ZipFile zip) throws Exception {
+        ZipEntry wbEntry = zip.getEntry("xl/workbook.xml");
+        ZipEntry relEntry = zip.getEntry("xl/_rels/workbook.xml.rels");
+        if (wbEntry == null || relEntry == null) return "xl/worksheets/sheet1.xml";
 
-        NodeList cells =
-                ((org.w3c.dom.Element) row)
-                        .getElementsByTagName("c");
-
-        for (int i = 0;
-             i < cells.getLength();
-             i++) {
-
-            org.w3c.dom.Element cell =
-                    (org.w3c.dom.Element) cells.item(i);
-
-            String value = "";
-
-            Node type =
-                    cell.getAttributes()
-                            .getNamedItem("t");
-
-            NodeList valueNodes =
-                    cell.getElementsByTagName("v");
-
-            if (valueNodes.getLength() > 0) {
-
-                value =
-                        valueNodes.item(0)
-                                .getTextContent();
-
-                if (type != null &&
-                        "s".equals(
-                                type.getNodeValue())) {
-
-                    try {
-
-                        int index =
-                                Integer.parseInt(value);
-
-                        if (index >= 0 &&
-                                index < sharedStrings.size()) {
-
-                            value =
-                                    sharedStrings.get(index);
-                        }
-
-                    } catch (Exception ignored) {
-                    }
-                }
+        Map<String,String> rels = new HashMap<>();
+        XmlPullParserFactory f = XmlPullParserFactory.newInstance();
+        f.setNamespaceAware(true);
+        XmlPullParser p = f.newPullParser();
+        p.setInput(zip.getInputStream(relEntry), "UTF-8");
+        for (int e = p.getEventType(); e != XmlPullParser.END_DOCUMENT; e = p.next()) {
+            if (e == XmlPullParser.START_TAG && "Relationship".equals(p.getName())) {
+                String id = p.getAttributeValue(null, "Id");
+                String target = p.getAttributeValue(null, "Target");
+                if (id != null && target != null) rels.put(id, target);
             }
-
-            values.add(value);
         }
 
-        return values;
-    }
-
-    private static String readEntry(
-            ZipInputStream zip) throws Exception {
-
-        StringBuilder result =
-                new StringBuilder();
-
-        byte[] buffer = new byte[4096];
-
-        int count;
-
-        while ((count = zip.read(buffer)) != -1) {
-
-            result.append(
-                    new String(
-                            buffer,
-                            0,
-                            count,
-                            "UTF-8"
-                    )
-            );
-        }
-
-        return result.toString();
-    }
-
-    private static Document parseXml(
-            String xml) throws Exception {
-
-        return DocumentBuilderFactory
-                .newInstance()
-                .newDocumentBuilder()
-                .parse(
-                        new java.io.ByteArrayInputStream(
-                                xml.getBytes("UTF-8")
-                        )
-                );
-    }
-
-    private static List<String> parseSharedStrings(
-            String xml) throws Exception {
-
-        List<String> result =
-                new ArrayList<>();
-
-        if (xml == null) {
-            return result;
-        }
-
-        Document document =
-                parseXml(xml);
-
-        NodeList strings =
-                document.getElementsByTagName("si");
-
-        for (int i = 0;
-             i < strings.getLength();
-             i++) {
-
-            Node stringNode =
-                    strings.item(i);
-
-            NodeList textNodes =
-                    ((org.w3c.dom.Element) stringNode)
-                            .getElementsByTagName("t");
-
-            StringBuilder value =
-                    new StringBuilder();
-
-            for (int j = 0;
-                 j < textNodes.getLength();
-                 j++) {
-
-                value.append(
-                        textNodes.item(j)
-                                .getTextContent()
-                );
+        String relId = null;
+        p = f.newPullParser();
+        p.setInput(zip.getInputStream(wbEntry), "UTF-8");
+        for (int e = p.getEventType(); e != XmlPullParser.END_DOCUMENT; e = p.next()) {
+            if (e == XmlPullParser.START_TAG && "sheet".equals(p.getName())) {
+                relId = p.getAttributeValue("http://schemas.openxmlformats.org/officeDocument/2006/relationships", "id");
+                if (relId == null) relId = p.getAttributeValue(null, "r:id");
+                if (relId != null) break;
             }
-
-            result.add(value.toString());
         }
+        String target = rels.get(relId);
+        if (target == null) return "xl/worksheets/sheet1.xml";
+        if (target.startsWith("/")) target = target.substring(1);
+        if (!target.startsWith("xl/")) target = "xl/" + target;
+        return target.replace("xl//", "xl/");
+    }
 
+    private static List<String> readSharedStrings(ZipFile zip) throws Exception {
+        ArrayList<String> result = new ArrayList<>();
+        ZipEntry entry = zip.getEntry("xl/sharedStrings.xml");
+        if (entry == null) return result;
+
+        XmlPullParserFactory f = XmlPullParserFactory.newInstance();
+        f.setNamespaceAware(true);
+        XmlPullParser p = f.newPullParser();
+        p.setInput(zip.getInputStream(entry), "UTF-8");
+        StringBuilder current = null;
+        for (int e = p.getEventType(); e != XmlPullParser.END_DOCUMENT; e = p.next()) {
+            if (e == XmlPullParser.START_TAG) {
+                if ("si".equals(p.getName())) current = new StringBuilder();
+                else if ("t".equals(p.getName()) && current != null) current.append(p.nextText());
+            } else if (e == XmlPullParser.END_TAG && "si".equals(p.getName()) && current != null) {
+                result.add(current.toString());
+                current = null;
+            }
+        }
         return result;
+    }
+
+    private static List<String[]> readSheet(ZipFile zip, String path, List<String> shared) throws Exception {
+        ZipEntry entry = zip.getEntry(path);
+        if (entry == null) throw new IllegalArgumentException("Foglio non trovato: " + path);
+
+        ArrayList<Map<Integer,String>> rows = new ArrayList<>();
+        int currentRow = -1;
+        Map<Integer,String> cells = null;
+        int maxCol = 0;
+        String cellRef = null;
+        String cellType = null;
+        String value = null;
+
+        XmlPullParserFactory f = XmlPullParserFactory.newInstance();
+        f.setNamespaceAware(true);
+        XmlPullParser p = f.newPullParser();
+        p.setInput(zip.getInputStream(entry), "UTF-8");
+
+        for (int e = p.getEventType(); e != XmlPullParser.END_DOCUMENT; e = p.next()) {
+            if (e == XmlPullParser.START_TAG) {
+                String tag = p.getName();
+                if ("row".equals(tag)) {
+                    currentRow = parseInt(p.getAttributeValue(null, "r"), rows.size() + 1) - 1;
+                    while (rows.size() <= currentRow) rows.add(new HashMap<Integer,String>());
+                    cells = rows.get(currentRow);
+                } else if ("c".equals(tag)) {
+                    cellRef = p.getAttributeValue(null, "r");
+                    cellType = p.getAttributeValue(null, "t");
+                    value = "";
+                } else if ("v".equals(tag) && cellRef != null) {
+                    value = p.nextText();
+                } else if ("t".equals(tag) && "inlineStr".equals(cellType) && cellRef != null) {
+                    value = p.nextText();
+                }
+            } else if (e == XmlPullParser.END_TAG && "c".equals(p.getName()) && cellRef != null && cells != null) {
+                int col = columnIndex(cellRef);
+                String out = value == null ? "" : value;
+                if ("s".equals(cellType)) {
+                    int idx = parseInt(out, -1);
+                    out = (idx >= 0 && idx < shared.size()) ? shared.get(idx) : "";
+                } else if ("str".equals(cellType)) {
+                    // already textual
+                }
+                cells.put(col, out);
+                maxCol = Math.max(maxCol, col + 1);
+                cellRef = null;
+                cellType = null;
+                value = null;
+            }
+        }
+
+        ArrayList<String[]> result = new ArrayList<>();
+        for (Map<Integer,String> row : rows) {
+            String[] arr = new String[maxCol];
+            for (int i=0;i<maxCol;i++) arr[i] = row.containsKey(i) ? row.get(i) : "";
+            result.add(arr);
+        }
+        return result;
+    }
+
+    private static int columnIndex(String ref) {
+        int n = 0;
+        for (int i=0;i<ref.length();i++) {
+            char ch = ref.charAt(i);
+            if (ch < 'A' || ch > 'Z') break;
+            n = n * 26 + (ch - 'A' + 1);
+        }
+        return Math.max(0, n - 1);
+    }
+
+    private static int parseInt(String s, int fallback) {
+        try { return Integer.parseInt(s); } catch (Exception e) { return fallback; }
     }
 }
