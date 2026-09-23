@@ -8,6 +8,7 @@ import android.content.Intent;
 import android.os.Build;
 import android.os.IBinder;
 import android.os.PowerManager;
+import android.app.PendingIntent;
 
 /**
  * Keeps the FantaFormation process alive while an automation that was already
@@ -30,10 +31,20 @@ public class FantaAutomationService extends Service {
                 : new Notification.Builder(this);
         b.setSmallIcon(R.drawable.ic_notification)
                 .setContentTitle("⚡ FantaFormation")
-                .setContentText("Automazione formazione in esecuzione")
+                .setContentText("Automazione formazione in esecuzione — puoi cambiare app")
                 .setOngoing(true)
                 .setCategory(Notification.CATEGORY_SERVICE)
                 .setPriority(Notification.PRIORITY_LOW);
+
+        try {
+            Intent open = new Intent(this, MainActivity.class);
+            open.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+            int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+            if (Build.VERSION.SDK_INT >= 23) flags |= PendingIntent.FLAG_IMMUTABLE;
+            PendingIntent contentIntent = PendingIntent.getActivity(this, 9002, open, flags);
+            b.setContentIntent(contentIntent);
+        } catch (Throwable ignored) {
+        }
 
         startForeground(NOTIFICATION_ID, b.build());
 
@@ -45,7 +56,7 @@ public class FantaAutomationService extends Service {
                         getPackageName() + ":FantaFormationService"
                 );
                 wakeLock.setReferenceCounted(false);
-                wakeLock.acquire(30 * 60 * 1000L);
+                wakeLock.acquire(2 * 60 * 60 * 1000L);
             }
         } catch (Throwable ignored) {
         }

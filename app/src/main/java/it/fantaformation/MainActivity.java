@@ -154,7 +154,7 @@ public class MainActivity extends Activity {
                     getPackageName() + ":FantaFormationAutomation"
             );
             automationWakeLock.setReferenceCounted(false);
-            automationWakeLock.acquire(30 * 60 * 1000L);
+            automationWakeLock.acquire(2 * 60 * 60 * 1000L);
         } catch (Throwable ignored) {
         }
     }
@@ -188,6 +188,19 @@ public class MainActivity extends Activity {
         try {
             stopService(new Intent(this, FantaAutomationService.class));
         } catch (Throwable ignored) {
+        }
+    }
+
+    /**
+     * The automation must keep running when the user presses Home or switches app.
+     * Do NOT call WebView.onPause(), pauseTimers() or destroy() here: the foreground
+     * service keeps the process alive while the existing WebView continues its work.
+     */
+    @Override
+    protected void onStop() {
+        super.onStop();
+        if (autoFlowEnabled || autoRunRequested) {
+            Log.d("FANTA_DEBUG", "APP IN BACKGROUND: automazione ancora attiva");
         }
     }
 
