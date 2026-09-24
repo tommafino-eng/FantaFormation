@@ -92,11 +92,15 @@ public class MainActivity extends Activity {
     private static final String NOTIFICATION_CHANNEL_ID = "formation_status";
     private static final long AUTO_INSERT_PAGE_SETTLE_MS = 650L;
 
+    /** Moduli standard della modalità Classic. */
     private static final Set<String> ALLOWED_FORMATIONS = new HashSet<>(Arrays.asList(
-            "3-4-3", "3-5-2", "3-4-1-2", "3-4-2-1", "3-5-1-1",
-            "4-3-3", "4-4-2", "4-3-1-2", "4-2-3-1", "4-1-4-1",
-            "4-5-1", "5-3-2", "5-4-1", "5-2-3"
+            "3-4-3", "3-5-2", "4-3-3", "4-4-2", "4-5-1", "5-3-2", "5-4-1"
     ));
+
+    private static final int EXCEL_GOALKEEPERS = 3;
+    private static final int EXCEL_DEFENDERS = 8;
+    private static final int EXCEL_MIDFIELDERS = 8;
+    private static final int EXCEL_ATTACKERS = 6;
 
     private LinearLayout root;
     private ScrollView scrollView;
@@ -430,6 +434,7 @@ public class MainActivity extends Activity {
                 if (rows == null || rows.isEmpty()) return;
                 selectedTeamName = name;
                 formazione = new ArrayList<>(rows);
+                applyExcelDefaultRoles(formazione);
                 persistSelectedTeamAndFormation();
                 showSelectedTeamSummary();
                 setStepState("EXCEL", 2, "Squadra selezionata: " + selectedTeamName + " (" + countRealPlayers(formazione) + " giocatori)");
@@ -1010,7 +1015,7 @@ public class MainActivity extends Activity {
                 "function visible(e){if(!e||!e.getBoundingClientRect)return false;const r=e.getBoundingClientRect();const c=getComputedStyle(e);return r.width>0&&r.height>0&&c.display!=='none'&&c.visibility!=='hidden'&&c.opacity!=='0';}" +
                 "function enabled(e){return !!e&&!e.disabled&&e.getAttribute('aria-disabled')!=='true';}" +
                 "function fire(e){if(!e||!visible(e)||!enabled(e))return false;try{e.scrollIntoView({block:'center',inline:'center'});}catch(x){}try{e.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true,view:window}));e.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,cancelable:true,view:window}));e.click();return true;}catch(x){try{e.click();return true;}catch(y){return false;}}}" +
-                "function formationNames(){return ['3-4-3','3-5-2','3-4-1-2','3-4-2-1','3-5-1-1','4-3-3','4-4-2','4-3-1-2','4-2-3-1','4-1-4-1','4-5-1','5-3-2','5-4-1','5-2-3'];}" +
+                "function formationNames(){return ['3-4-3','3-5-2','4-3-3','4-4-2','4-5-1','5-3-2','5-4-1'];}" +
                 "function exactVisibleText(name){const n=norm(name);return [...document.querySelectorAll('button,[role=button],[role=option],[role=menuitem],option,li,span,div')].filter(visible).find(e=>norm(e.innerText||e.textContent||e.value||e.getAttribute('aria-label')||'')===n)||null;}" +
                 "function moduleControl(){const candidates=[...document.querySelectorAll('select,button,[role=button],input')].filter(visible).filter(e=>enabled(e));const forms=formationNames();return candidates.find(e=>{const t=norm(e.innerText||e.textContent||e.value||e.getAttribute('aria-label')||e.getAttribute('title')||'');return forms.some(f=>t===norm(f));})||candidates.find(e=>{const t=norm(e.innerText||e.textContent||e.getAttribute('aria-label')||e.getAttribute('title')||'');return t==='modulo'||t.includes('modulo')||t.includes('schema');})||null;}" +
                 "async function selectModule(name){const wanted=norm(name);if(!formationNames().includes(name)){AndroidBridge.report('MODULO FALLITO: modulo non riconosciuto '+name);return false;}let current=moduleControl();if(current){const ct=norm(current.innerText||current.textContent||current.value||current.getAttribute('aria-label')||'');if(ct===wanted){AndroidBridge.report('MODULO: '+name+' già selezionato');return true;}if(current.tagName==='SELECT'){const opts=[...current.options];const op=opts.find(o=>norm(o.textContent||o.value)===wanted);if(op){current.value=op.value;current.dispatchEvent(new Event('change',{bubbles:true}));await sleep(900);}}else{fire(current);await sleep(500);}}else{AndroidBridge.report('MODULO: controllo modulo non identificato, cerco opzione direttamente');}for(let i=0;i<30;i++){const opt=exactVisibleText(name);if(opt){fire(opt);await sleep(1000);break;}await sleep(200);}for(let i=0;i<25;i++){const c=moduleControl();const ct=c?norm(c.innerText||c.textContent||c.value||c.getAttribute('aria-label')||''):'';if(ct===wanted){AndroidBridge.report('MODULO_OK:'+name);return true;}const body=norm(document.body.innerText||'');const count=(body.match(new RegExp('\\b'+wanted.replace(/[-]/g,'\\-')+'\\b','g'))||[]).length;if(count>0&&i>8){const active=[...document.querySelectorAll('[aria-selected=\"true\"],.ant-select-selection-item,.ant-select-selection-selected-value')].filter(visible).some(e=>norm(e.innerText||e.textContent||e.getAttribute('title')||'')===wanted);if(active){AndroidBridge.report('MODULO_OK:'+name);return true;}}await sleep(250);}AndroidBridge.report('MODULO FALLITO: impossibile verificare '+name);return false;}" +
@@ -1390,7 +1395,10 @@ public class MainActivity extends Activity {
                 for (int j = 0; j < item.length(); j++) row[j] = item.optString(j, "");
                 rows.add(row);
             }
-            if (!rows.isEmpty()) formazione = rows;
+            if (!rows.isEmpty()) {
+                applyExcelDefaultRoles(rows);
+                formazione = rows;
+            }
         } catch (Exception e) {
             Log.e("FANTA_DEBUG", "Errore caricamento Excel salvato", e);
         }
@@ -1450,6 +1458,7 @@ public class MainActivity extends Activity {
 
         selectedTeamName = "";
         formazione = new ArrayList<>(result);
+        applyExcelDefaultRoles(formazione);
         saveFormation(formazione);
         hideTeamSpinner();
         showSavedFormationSummary();
@@ -1665,6 +1674,7 @@ public class MainActivity extends Activity {
         if (rows == null || rows.isEmpty()) return;
         selectedTeamName = teamName;
         formazione = new ArrayList<>(rows);
+        applyExcelDefaultRoles(formazione);
         persistSelectedTeamAndFormation();
         if (teamSpinner != null && detectedTeamNames != null) {
             int index = detectedTeamNames.indexOf(teamName);
@@ -1925,6 +1935,7 @@ public class MainActivity extends Activity {
                 if (selectedRows == null || selectedRows.isEmpty()) return;
 
                 formazione = new ArrayList<>(selectedRows);
+                applyExcelDefaultRoles(formazione);
                 persistSelectedTeamAndFormation();
                 showSelectedTeamSummary();
                 setStepState("EXCEL", 2, "Squadra salvata: " + selectedTeamName + " (" + formazione.size() + " giocatori)");
@@ -1963,6 +1974,47 @@ public class MainActivity extends Activity {
             if (row != null && row.length > 1 && !cleanName(row[1]).isEmpty() && !isLikelyHeader(row[1])) count++;
         }
         return count;
+    }
+
+    /** Default Classic dal listone: 3 P, 8 D, 8 C, 6 A. */
+    private void applyExcelDefaultRoles(List<String[]> rows) {
+        if (rows == null) return;
+        int playerIndex = 0;
+        for (int i = 0; i < rows.size(); i++) {
+            String[] row = rows.get(i);
+            if (row == null || row.length < 2) continue;
+            String player = cleanName(row[1]);
+            if (player.isEmpty() || isLikelyHeader(player) || "totale".equals(normalize(player))) continue;
+            String role = roleFromExcelIndex(playerIndex);
+            if (role.isEmpty()) break;
+            String existingRole = row.length > 3 ? normalizeRoleCode(row[3]) : "";
+            if (row.length < 4) {
+                row = Arrays.copyOf(row, 4);
+                rows.set(i, row);
+                existingRole = "";
+            }
+            // Non sovrascrivere un eventuale ruolo modificato manualmente.
+            if (existingRole.isEmpty()) row[3] = role;
+            playerIndex++;
+        }
+    }
+
+    private String roleFromExcelIndex(int index) {
+        if (index < EXCEL_GOALKEEPERS) return "P";
+        if (index < EXCEL_GOALKEEPERS + EXCEL_DEFENDERS) return "D";
+        if (index < EXCEL_GOALKEEPERS + EXCEL_DEFENDERS + EXCEL_MIDFIELDERS) return "C";
+        if (index < EXCEL_GOALKEEPERS + EXCEL_DEFENDERS + EXCEL_MIDFIELDERS + EXCEL_ATTACKERS) return "A";
+        return "";
+    }
+
+    private String normalizeRoleCode(String role) {
+        if (role == null) return "";
+        String r = normalize(role);
+        if ("p".equals(r) || r.contains("portiere")) return "P";
+        if ("d".equals(r) || r.contains("difensore")) return "D";
+        if ("c".equals(r) || r.contains("centrocampista")) return "C";
+        if ("a".equals(r) || r.contains("attaccante")) return "A";
+        return "";
     }
 
     private void chooseExcel() {
@@ -2237,56 +2289,54 @@ public class MainActivity extends Activity {
             calculateScore(stats, news, context, advice);
         }
 
+        /**
+         * Indice di schierabilità 0-100: non sono fantapunti previsti.
+         * Serve solo a confrontare i giocatori del turno usando i dati raccolti.
+         */
         private void calculateScore(AdvancedStats stats, NewsSignal news, MatchContext context, AdviceSignal advice) {
-            score = 0;
-            recentForm = stats != null ? stats.recentForm : 50.0;
-            statsFactor = stats != null ? clamp(stats.recentForm, 0, 100) : 45.0;
+            recentForm = stats != null ? clamp(stats.recentForm, 0, 100) : 50.0;
+            statsFactor = recentForm;
             opponentFactor = context != null ? (100.0 - clamp(context.opponentDifficulty, 0, 100)) : 50.0;
-            newsFactor = news != null ? news.score : 0.0;
+            newsFactor = news != null ? clamp(news.score, -40, 40) : 0.0;
             opponent = context != null ? context.opponent : "";
 
-            double availability = probable > 0 ? (0.35 + 0.65 * (probable / 100.0)) : (starter ? 0.62 : 0.35);
-            double seasonFactor = stats != null && stats.fantasyAverage > 0 ? clamp((stats.fantasyAverage - 5.0) * 20.0, 0, 100) : 45.0;
-            double bonusFactor = stats != null ? clamp(50.0 + stats.goals * 5.0 + stats.assists * 3.0 + stats.penaltiesScored * 6.0, 0, 100) : 45.0;
-            double consistencyFactor = stats != null ? clamp(stats.consistency, 0, 100) : 50.0;
-            double newsPositive = clamp(newsFactor + 50.0, 0, 100);
-            double adviceScore = advice != null ? clamp(advice.score, -40, 40) : 0.0;
-
-            double quality = statsFactor * 0.30
-                    + seasonFactor * 0.20
-                    + bonusFactor * 0.16
-                    + consistencyFactor * 0.10
-                    + opponentFactor * 0.16
-                    + newsPositive * 0.08;
-
-            score += probable * 0.34;
-            score += quality * 0.34 * availability;
-            score += opponentFactor * 0.10;
-            score += clamp(newsFactor, -100, 100) * 0.08;
-            score += externalAgreement * 5.0;
-            // I consigli editoriali sono un segnale aggiuntivo, non sostituiscono i dati.
-            score += adviceScore * 0.55;
-            score += Math.min(fvm, 350) * 0.035;
-            score += Math.min(quote, 100) * 0.025;
-            if (starter) score += 8;
-            if (bench && !starter) score -= 7;
-            if (probable == 0 && !starter) score -= 24;
-
+            double availability = probable > 0 ? probable : (starter ? 70.0 : (bench ? 35.0 : 50.0));
+            double fantasyAverageIndex = 50.0;
             if (stats != null) {
-                // Premio esplicito al potenziale bonus: gol, assist e rigori contano più
-                // della sola media voto, soprattutto per C/A.
-                double seasonBonus = stats.goals * 1.8 + stats.assists * 1.3 + stats.penaltiesScored * 2.5 - stats.penaltiesMissed * 0.8;
-                double recentBonus = stats.last5Goals * 3.5 + stats.last5Assists * 2.5;
-                score += Math.min(20.0, Math.max(-5.0, seasonBonus + recentBonus));
-                if ("A".equals(role)) score += stats.goals * 1.1 + stats.assists * 0.6;
-                if ("C".equals(role)) score += stats.assists * 0.9 + stats.goals * 0.8;
-                if ("D".equals(role)) score += stats.assists * 0.4 + stats.goals * 0.7;
-                if ("P".equals(role)) score += stats.last5CleanSheets * 1.8 - stats.red * 1.2;
-                if ("A".equals(role)) score += stats.goals * 1.4 + stats.assists * 0.8;
-                if ("C".equals(role)) score += stats.goals * 1.1 + stats.assists * 1.0;
+                if (stats.fantasyAverage > 0) fantasyAverageIndex = clamp((stats.fantasyAverage - 5.0) * 40.0, 0, 100);
+                else if (stats.averageVote > 0) fantasyAverageIndex = clamp((stats.averageVote - 5.0) * 40.0, 0, 100);
             }
-            if (context != null && context.home) score += 3.0;
-            confidence = clamp((probable * 0.45) + (externalAgreement * 18.0) + (stats != null ? 22.0 : 0.0) + (news != null ? 8.0 : 0.0), 0, 100);
+
+            double bonusIndex = 50.0;
+            if (stats != null && stats.appearances > 0) {
+                double bonusPerAppearance = (stats.goals * 1.0 + stats.assists * 0.65
+                        + stats.penaltiesScored * 0.9 - stats.penaltiesMissed * 0.25) / stats.appearances;
+                double roleScale = "A".equals(role) ? 0.55 : "C".equals(role) ? 0.40 : "D".equals(role) ? 0.22 : 0.12;
+                bonusIndex = clamp(50.0 + (bonusPerAppearance / roleScale) * 50.0, 0, 100);
+            }
+
+            double consistencyIndex = stats != null ? clamp(stats.consistency, 0, 100) : 50.0;
+            double newsIndex = clamp(50.0 + newsFactor, 0, 100);
+            double externalIndex = externalAgreement == 2 ? 100.0 : (externalAgreement == 1 ? 75.0 : 50.0);
+            double adviceIndex = advice != null ? clamp(50.0 + advice.score, 0, 100) : 50.0;
+
+            double index = availability * 0.28
+                    + fantasyAverageIndex * 0.20
+                    + recentForm * 0.16
+                    + opponentFactor * 0.12
+                    + bonusIndex * 0.10
+                    + consistencyIndex * 0.06
+                    + newsIndex * 0.04
+                    + externalIndex * 0.02
+                    + adviceIndex * 0.02;
+
+            if (probable == 0 && !starter && !bench) index -= 8.0;
+            if (probable > 0 && probable < 50) index -= 5.0;
+
+            score = clamp(index, 0, 100);
+            confidence = clamp((probable > 0 ? probable * 0.60 : (starter ? 55.0 : 35.0))
+                    + (stats != null ? 20.0 : 0.0) + (externalAgreement * 7.0)
+                    + (news != null ? 6.0 : 0.0), 0, 100);
             explanation = buildExplanation(stats, news, context, advice);
         }
 
@@ -2440,6 +2490,7 @@ public class MainActivity extends Activity {
             if (excelName.isEmpty() || isLikelyHeader(excelName)) continue;
 
             String normalizedExcel = normalize(excelName);
+            String excelDefaultRole = row.length > 3 ? normalizeRoleCode(row[3]) : "";
             String cachedRole = roleCache.getRole(normalizedExcel);
             OfficialPlayer officialPlayer = findOfficialPlayer(excelName, official);
 
@@ -2448,7 +2499,7 @@ public class MainActivity extends Activity {
                         excelName,
                         excelName,
                         "",
-                        cachedRole,
+                        !excelDefaultRole.isEmpty() ? excelDefaultRole : cachedRole,
                         0,
                         0,
                         0,
@@ -2461,9 +2512,11 @@ public class MainActivity extends Activity {
             }
 
             String normalizedOfficialName = normalize(officialPlayer.name);
-            String role = !cachedRole.isEmpty() ? cachedRole : officialPlayer.role;
+            String role = !excelDefaultRole.isEmpty()
+                    ? excelDefaultRole
+                    : (!cachedRole.isEmpty() ? cachedRole : officialPlayer.role);
 
-            if (cachedRole.isEmpty() && !officialPlayer.role.isEmpty()) {
+            if (excelDefaultRole.isEmpty() && cachedRole.isEmpty() && !officialPlayer.role.isEmpty()) {
                 roleCache.setRole(normalizedExcel, officialPlayer.role);
                 roleCache.setRole(normalizedOfficialName, officialPlayer.role);
             }
@@ -3068,65 +3121,25 @@ public class MainActivity extends Activity {
     }
 
     private double formationAgentAdjustment(FormationResult result) {
-        if (result == null || agentDecision == null) return 0.0;
-
-        int d = result.defenders.size();
-        int c = result.midfielders.size();
-        int a = result.attackers.size();
-
-        double adjustment = (a * agentDecision.offensiveBias)
-                + (c * agentDecision.offensiveBias * 0.35)
-                - (d * 0.12);
-
-        if ("PRUDENTE".equals(agentDecision.mode)) {
-            if (d >= 4) adjustment += 1.2;
-            if (a >= 3) adjustment -= 0.8;
-        } else if ("BONUS + FORMA".equals(agentDecision.mode)) {
-            if (a >= 3) adjustment += 2.4;
-            if (c >= 4) adjustment += 0.9;
-        }
-
-        ArrayList<Player> starters = new ArrayList<>();
-        starters.addAll(result.goalkeeper);
-        starters.addAll(result.defenders);
-        starters.addAll(result.midfielders);
-        starters.addAll(result.attackers);
-
-        int uncertain = 0;
-        for (Player player : starters) {
-            if (player != null && player.probable > 0 && player.probable < 65) uncertain++;
-        }
-        adjustment -= uncertain * agentDecision.riskPenalty * 0.18;
-
-        return adjustment;
+        return 0.0;
     }
 
-    /**
-     * V16 AI Formation Engine.
-     * Non si limita a prendere i primi giocatori per ruolo: prova combinazioni
-     * ristrette ai migliori candidati, valuta il potenziale bonus e confronta
-     * tutti i moduli disponibili. È un ottimizzatore locale, quindi non richiede
-     * API esterne né invia la rosa a servizi AI.
-     */
     private FormationResult calculateBestFormation(ArrayList<Player> players) {
         FormationResult best = null;
         ArrayList<String> modules = new ArrayList<>(ALLOWED_FORMATIONS);
         Collections.sort(modules);
-
         for (String module : modules) {
             FormationResult result = calculateFormation(module, players);
             if (!result.valid) continue;
-            result.score += formationAgentAdjustment(result);
             if (best == null || result.score > best.score) best = result;
         }
-
         if (best == null) {
             FormationResult empty = new FormationResult();
             empty.module = "NESSUNA";
             empty.valid = false;
+            empty.score = 0;
             return empty;
         }
-
         return best;
     }
 
@@ -3210,13 +3223,7 @@ public class MainActivity extends Activity {
 
     private double aiPlayerValue(Player p) {
         if (p == null) return -9999;
-        double v = p.score;
-        // L'AI engine usa affidabilità e potenziale bonus come tie-breaker.
-        v += p.confidence * 0.10;
-        v += offensiveBonusPotential(p) * ("A".equals(p.role) ? 1.35 : "C".equals(p.role) ? 1.10 : "D".equals(p.role) ? 0.45 : 0.15);
-        if (p.probable >= 85) v += 1.5;
-        if (p.probable < 60 && p.probable > 0) v -= 2.5;
-        return v;
+        return p.score;
     }
 
     private ArrayList<ArrayList<Player>> topCombinations(List<Player> pool, int need, int maxSets) {
@@ -3267,33 +3274,11 @@ public class MainActivity extends Activity {
         for (Player p : result.midfielders) result.score += aiPlayerValue(p);
         for (Player p : result.attackers) result.score += aiPlayerValue(p);
 
-        int d = result.defenders.size(), c = result.midfielders.size(), a = result.attackers.size();
-        if (a >= 3) result.score += 8.0;
-        if (c >= 4) result.score += 3.0;
-        if (d == 3) result.score += 5.0;
-        if (d >= 5) result.score -= 12.0;
-
-        double bonus = 0;
-        for (Player p : result.midfielders) bonus += offensiveBonusPotential(p) * 1.15;
-        for (Player p : result.attackers) bonus += offensiveBonusPotential(p) * 1.45;
-        for (Player p : result.defenders) bonus += offensiveBonusPotential(p) * 0.45;
-        result.score += Math.min(30.0, bonus);
-
-        // Penalità per troppi giocatori con bassa probabilità di partire.
-        int risky = 0;
-        ArrayList<Player> starters = new ArrayList<>();
-        starters.addAll(result.goalkeeper); starters.addAll(result.defenders); starters.addAll(result.midfielders); starters.addAll(result.attackers);
-        for (Player p : starters) if (p.probable > 0 && p.probable < 65) risky++;
-        result.score -= risky * 3.5;
-
-        // Premia la copertura di bonus distribuita tra più reparti.
-        int bonusSources = 0;
-        for (Player p : result.midfielders) if (offensiveBonusPotential(p) >= 2.0) bonusSources++;
-        for (Player p : result.attackers) if (offensiveBonusPotential(p) >= 2.0) bonusSources++;
-        result.score += Math.min(10, bonusSources * 1.8);
-
-        fillBench(result, allPlayers);
-        result.valid = true;
+        result.valid = result.goalkeeper.size() == 1
+                && !result.defenders.isEmpty()
+                && !result.midfielders.isEmpty()
+                && !result.attackers.isEmpty();
+        if (result.valid) fillBench(result, allPlayers);
     }
 
     private void fillBench(FormationResult result, ArrayList<Player> allPlayers) {
@@ -3345,6 +3330,10 @@ public class MainActivity extends Activity {
         ArrayList<Player> playersWithoutRole = new ArrayList<>();
 
         for (Player player : players) {
+            if (player.role == null || player.role.isEmpty()) {
+                String excelRole = findExcelDefaultRoleForPlayer(player.excelName);
+                if (!excelRole.isEmpty()) player.role = excelRole;
+            }
             sb.append(player.excelName).append(" → ");
             if (player.role == null || player.role.isEmpty()) {
                 sb.append("RUOLO DA ASSEGNARE");
@@ -3364,8 +3353,8 @@ public class MainActivity extends Activity {
             sb.append("   Probabile: ").append(player.probable).append("%\n")
                     .append("   FVM: ").append(player.fvm).append("\n")
                     .append("   Conferme Gazzetta/Sky: ").append(player.externalAgreement).append("/2\n")
-                    .append("   SCORE: ").append(String.format(Locale.US, "%.1f", player.score))
-                    .append(" punti • Affidabilità ")
+                    .append("   INDICE SCHIERABILITÀ: ").append(String.format(Locale.US, "%.0f/100", player.score))
+                    .append(" • Affidabilità ")
                     .append(String.format(Locale.US, "%.0f%%", player.confidence));
 
             if (player.opponent != null && !player.opponent.isEmpty()) {
@@ -3398,6 +3387,23 @@ public class MainActivity extends Activity {
 
         setStepState("RUOLI", 2, "Ruoli verificati");
         displayFormationResult(sb, best);
+    }
+
+    private String findExcelDefaultRoleForPlayer(String playerName) {
+        if (formazione == null || playerName == null) return "";
+        String target = normalize(playerName);
+        int playerIndex = 0;
+        for (String[] row : formazione) {
+            if (row == null || row.length < 2) continue;
+            String name = cleanName(row[1]);
+            if (name.isEmpty() || isLikelyHeader(name) || "totale".equals(normalize(name))) continue;
+            if (target.equals(normalize(name))) {
+                String role = row.length > 3 ? normalizeRoleCode(row[3]) : "";
+                return role.isEmpty() ? roleFromExcelIndex(playerIndex) : role;
+            }
+            playerIndex++;
+        }
+        return "";
     }
 
     private void showRoleAssignmentDialog(ArrayList<Player> playersWithoutRole, ArrayList<Player> allPlayers) {
@@ -3507,6 +3513,23 @@ public class MainActivity extends Activity {
         roleCache.setRole(normalizedExcelName, selectedRole);
         roleCache.setRole(normalizedOfficialName, selectedRole);
         player.role = selectedRole;
+
+        // La modifica manuale diventa persistente anche nel modello Excel salvato.
+        if (formazione != null) {
+            String target = normalize(player.excelName);
+            for (int i = 0; i < formazione.size(); i++) {
+                String[] row = formazione.get(i);
+                if (row == null || row.length < 2) continue;
+                if (!target.equals(normalize(cleanName(row[1])))) continue;
+                if (row.length < 4) {
+                    row = Arrays.copyOf(row, 4);
+                    formazione.set(i, row);
+                }
+                row[3] = selectedRole;
+                saveFormation(formazione);
+                break;
+            }
+        }
     }
 
     private void openEditRolesDialog() {
@@ -3630,14 +3653,14 @@ public class MainActivity extends Activity {
         card.addView(head);
 
         TextView sub = new TextView(this);
-        sub.setText("FORMAZIONE OTTIMALE  •  AGENT LOCALE + DATI ONLINE");
+        sub.setText("FORMAZIONE CLASSIC  •  DATI ONLINE + OTTIMIZZAZIONE LOCALE\nIndice 0-100 = schierabilità, non fantapunti previsti");
         sub.setTextColor(Color.rgb(120, 220, 150));
         sub.setTextSize(13);
         sub.setPadding(0, dp(6), 0, dp(16));
         card.addView(sub);
 
         TextView module = new TextView(this);
-        module.setText(best.module + "   •   " + String.format(Locale.US, "%.1f punti", best.score));
+        module.setText("MODULO CLASSIC  •  " + best.module);
         module.setTextColor(Color.WHITE);
         module.setTextSize(20);
         module.setTypeface(null, Typeface.BOLD);
@@ -3682,7 +3705,7 @@ public class MainActivity extends Activity {
         int totalBench = best.benchGoalkeeper.size() + best.benchDefenders.size() +
                 best.benchMidfielders.size() + best.benchAttackers.size();
         TextView info = new TextView(this);
-        info.setText("11 titolari  •  " + totalBench + " panchinari\nMassimo 2 per ruolo  •  Totale " + (11 + totalBench) + " giocatori");
+        info.setText("11 titolari  •  " + totalBench + " panchinari");
         info.setTextColor(Color.rgb(170, 178, 190));
         info.setTextSize(13);
         info.setPadding(dp(4), dp(14), dp(4), 0);
@@ -3744,9 +3767,9 @@ public class MainActivity extends Activity {
             playerCard.addView(nameView, new LinearLayout.LayoutParams(-1, -2));
 
             TextView scoreView = new TextView(this);
-            scoreView.setText(String.format(Locale.US, "%.1f", p.score));
+            scoreView.setText("Schierabilità " + String.format(Locale.US, "%.0f/100", p.score));
             scoreView.setTextColor(Color.rgb(190, 235, 205));
-            scoreView.setTextSize(10);
+            scoreView.setTextSize(9);
             scoreView.setTypeface(null, Typeface.BOLD);
             scoreView.setGravity(Gravity.CENTER);
             scoreView.setPadding(0, dp(3), 0, 0);
