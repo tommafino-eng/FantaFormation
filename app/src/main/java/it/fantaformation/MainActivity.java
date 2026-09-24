@@ -1,12 +1,16 @@
 package it.fantaformation;
 
 import android.app.Activity;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
 import android.app.AlertDialog;
 import android.app.ActivityOptions;
 import android.app.TimePickerDialog;
 import android.app.Dialog;
 import android.os.Bundle;
 import android.content.Intent;
+import android.content.Context;
 import android.net.Uri;
 import android.provider.Settings;
 import android.os.Build;
@@ -83,6 +87,7 @@ public class MainActivity extends Activity {
     private static final String LEGA_HOME_URL = "https://leghe.fantacalcio.it/yoooo";
     private static final int WEEKLY_ALARM_REQUEST = 24051;
     private static final int NOTIFICATION_PERMISSION_REQUEST = 701;
+    private static final String NOTIFICATION_CHANNEL_ID = "formation_status";
     private static final long AUTO_INSERT_PAGE_SETTLE_MS = 650L;
 
     private static final Set<String> ALLOWED_FORMATIONS = new HashSet<>(Arrays.asList(
@@ -140,6 +145,22 @@ public class MainActivity extends Activity {
     private static final String FANTACALCIO_CALENDAR = "https://www.fantacalcio.it/serie-a/calendario";
     private static final String FANTACALCIO_RECENT_BASE = "https://www.fantacalcio.it/serie-a/statistiche";
 
+
+    private void acquireAutomationWakeLock() {
+        try {
+            if (automationWakeLock != null && automationWakeLock.isHeld()) return;
+            PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+            if (pm == null) return;
+            automationWakeLock = pm.newWakeLock(
+                    PowerManager.PARTIAL_WAKE_LOCK,
+                    getPackageName() + ":FantaFormationAutomation"
+            );
+            automationWakeLock.setReferenceCounted(false);
+            automationWakeLock.acquire(45 * 60 * 1000L);
+        } catch (Throwable e) {
+            Log.d("FANTA_DEBUG", "WakeLock non acquisito: " + e.getMessage());
+        }
+    }
 
     private void releaseAutomationWakeLock() {
         try {
@@ -1436,6 +1457,24 @@ public class MainActivity extends Activity {
                 Toast.LENGTH_LONG).show();
     }
 
+    private ArrayAdapter<String> buildTeamSpinnerAdapter() {
+        ArrayList<String> names = detectedTeamNames == null
+                ? new ArrayList<String>()
+                : new ArrayList<>(detectedTeamNames);
+        ArrayAdapter<String> adapter = new ArrayAdapter<String>(
+                this, android.R.layout.simple_spinner_item, names) {
+            @Override
+            public View getView(int position, View convertView, ViewGroup parent) {
+                TextView view = (TextView) super.getView(position, convertView, parent);
+                view.setTextColor(Color.WHITE);
+                view.setPadding(20, 14, 20, 14);
+                return view;
+            }
+        };
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        return adapter;
+    }
+
     private void setupTeamSpinner() {
         if (teamSpinner == null) return;
         if (detectedTeamNames == null || detectedTeamNames.size() <= 1) {
@@ -2478,16 +2517,17 @@ public class MainActivity extends Activity {
     private Map<String, AdvancedStats> parseAdvancedStats(String html) {
         Map<String, AdvancedStats> result = new HashMap<>();
         if (html == null || html.isEmpty()) return result;
+
         Document document = Jsoup.parse(html);
-
         for (Element table : document.select("table")) {
-            Elements headerCells = table.select("thead tr").first() != null
-                    ? table.select("thead tr").first().select("th,td")
-                    : table.select("tr").first().select("th,td");
-            if (headerCells.size() < 4) continue;
+            Element header = table.select("thead tr").first();
+            if (header == null) header = table.select("tr").first();
+            if (header == null) continue;
 
+            Elements headerCells = header.select("th,td");
+            if (headerCells.size() < 2) continue;
             Map<String,Integer> idx = new HashMap<>();
-            for (int i=0;i<headerCells.size();i++) {
+            for (int i = 0; i < headerCells.size(); i++) {
                 String h = normalize(headerCells.get(i).text());
                 if (h.contains("calciatore") || h.equals("nome") || h.equals("giocatore")) idx.put("name", i);
                 if (h.equals("pv") || h.contains("presenze")) idx.put("pv", i);
@@ -2502,28 +2542,35 @@ public class MainActivity extends Activity {
                 if (h.contains("rigori sbagliati")) idx.put("penMiss", i);
             }
 
-            if (sky.containsKey(
-                    normalizedOfficialName
-            )) {
+            Integer nameIndex = idx.get("name");
+            if (nameIndex == null) continue;
 
-                externalAgreement++;
+            for (Element row : table.select("tbody tr")) {
+                Elements cells = row.select("th,td");
+                if (cells.isEmpty()) continue;
+                if (nameIndex < 0 || nameIndex >= cells.size()) continue;
+                String name = cleanName(cells.get(nameIndex).text());
+                if (name.length() < 3) continue;
+
+                AdvancedStats st = new AdvancedStats();
+                st.appearances = valueAt(cells, idx, "pv", 0);
+                st.averageVote = doubleAt(cells, idx, "mv", 0);
+                st.fantasyAverage = doubleAt(cells, idx, "fm", 0);
+                st.goals = valueAt(cells, idx, "goals", 0);
+                st.assists = valueAt(cells, idx, "assists", 0);
+                st.penaltiesScored = valueAt(cells, idx, "pen", 0);
+                st.penaltiesTaken = valueAt(cells, idx, "penTaken", 0);
+                st.yellow = valueAt(cells, idx, "yellow", 0);
+                st.red = valueAt(cells, idx, "red", 0);
+                st.penaltiesMissed = valueAt(cells, idx, "penMiss", 0);
+
+                double base = st.fantasyAverage > 0
+                        ? (st.fantasyAverage - 5.0) * 20.0
+                        : (st.averageVote > 0 ? (st.averageVote - 5.0) * 20.0 : 45.0);
+                st.recentForm = clampDouble(base, 0, 100);
+                st.consistency = st.appearances > 0 ? 65.0 : 50.0;
+                result.put(normalize(name), st);
             }
-
-            Player player =
-                    new Player(
-                            excelName,
-                            officialPlayer.name,
-                            officialPlayer.team,
-                            role,
-                            officialPlayer.classicQuote,
-                            officialPlayer.fvm,
-                            probable,
-                            externalAgreement,
-                            starter,
-                            bench
-                    );
-
-            result.add(player);
         }
         return result;
     }
