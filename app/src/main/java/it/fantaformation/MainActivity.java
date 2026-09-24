@@ -11,6 +11,8 @@ import android.app.Dialog;
 import android.os.Bundle;
 import android.content.Intent;
 import android.content.Context;
+import android.content.ClipboardManager;
+import android.content.ClipData;
 import android.net.Uri;
 import android.provider.Settings;
 import android.os.Build;
