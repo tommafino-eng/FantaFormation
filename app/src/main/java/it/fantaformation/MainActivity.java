@@ -1039,7 +1039,7 @@ public class MainActivity extends Activity {
                 "function clickPlayer(e){if(!e)return false;let p=e;for(let i=0;i<8&&p;i++,p=p.parentElement){if(p.tagName==='A')continue;if(p.tagName==='BUTTON'||p.getAttribute('role')==='button'||p.getAttribute('role')==='option'||p.getAttribute('role')==='radio'||p.hasAttribute('data-player')||p.tagName==='LI')return fire(p);}return fire(e);}" +
                 "async function waitDrawer(before){for(let i=0;i<40;i++){const r=pickerRoot();if(r&&r!==before)return r;if(r&&drawerText(r).includes('rosa'))return r;await sleep(200);}return null;}" +
                 "async function waitDrawerClose(root){for(let i=0;i<30;i++){if(!root||!visible(root)||!drawerText(root).includes('rosa'))return true;await sleep(200);}return false;}" +
-                "async function choosePlayer(root,name,slot){for(let pass=0;pass<2;pass++){pickerSearch(root,name);await sleep(220);for(let i=0;i<22;i++){const c=candidatePlayer(root,name);if(c&&clickPlayer(c)){for(let v=0;v<18;v++){if(slot&&verify(slot,name))return true;await sleep(100);}if(!slot)return true;}await sleep(140);}await sleep(180);}return false;}" +
+                "async function choosePlayer(root,name,slot){const isBench=slot&&reserveOf(slot);const searchWait=isBench?120:220;const verifyWait=isBench?55:100;const retryWait=isBench?75:140;const passWait=isBench?100:180;const maxPass=isBench?2:2;const maxScan=isBench?18:22;const maxVerify=isBench?12:18;for(let pass=0;pass<maxPass;pass++){pickerSearch(root,name);await sleep(searchWait);for(let i=0;i<maxScan;i++){const c=candidatePlayer(root,name);if(c&&clickPlayer(c)){for(let v=0;v<maxVerify;v++){if(slot&&verify(slot,name))return true;await sleep(verifyWait);}if(!slot)return true;}await sleep(retryWait);}await sleep(passWait);}return false;}" +
                 "function verify(slot,name){return nameMatches(currentName(slot),norm(name));}" +
                 "function occupiedCount(){return slots().filter(s=>!!currentName(s)).length;}" +
                 "function clearButton(){const scope=document.querySelector('view-lineup')||document;const els=[...scope.querySelectorAll('button,[role=button],a,[title],[aria-label]')].filter(e=>visible(e)&&enabled(e)&&!norm(e.innerText||e.textContent||'').includes('salva formazione'));let best=null,bestScore=-1;for(const e of els){const t=norm((e.innerText||e.textContent||'')+' '+(e.getAttribute('aria-label')||'')+' '+(e.getAttribute('title')||'')+' '+(e.getAttribute('data-testid')||'')+' '+(e.getAttribute('data-test')||''));const html=norm(e.outerHTML||'');let sc=0;if(t.includes('svuota'))sc+=100;if(t.includes('cestino'))sc+=100;if(t.includes('trash'))sc+=95;if(t.includes('clear'))sc+=85;if(t.includes('reset'))sc+=80;if(t.includes('azzera'))sc+=80;if(t.includes('elimina formazione'))sc+=120;if(html.includes('trash')||html.includes('delete')||html.includes('remove'))sc+=45;if(e.querySelector('svg'))sc+=5;if(sc>bestScore){bestScore=sc;best=e;}}return bestScore>=45?best:null;}" +
@@ -1070,7 +1070,7 @@ public class MainActivity extends Activity {
                 "if(!root){AndroidBridge.report('INSERISCI: Rosa non aperta per '+item.name+' slot '+key);fail++;continue;}" +
                 "if(!drawerText(root).includes('rosa'))AndroidBridge.report('INSERISCI: drawer aperto, testo Rosa non rilevato per '+item.name);" +
                 "if(!(await choosePlayer(root,item.name,slot))){AndroidBridge.report('INSERISCI: '+item.name+' non trovato o non confermato nella Rosa');fail++;continue;}" +
-                "await sleep(120);" +
+                "await sleep(reserveOf(slot)?60:120);" +
                 "if(verify(slot,item.name)){ok++;AndroidBridge.report('INSERISCI: '+item.name+' inserito nello slot '+key);}else{fail++;AndroidBridge.report('INSERISCI: verifica fallita per '+item.name+' nello slot '+key+'; trovato='+currentName(slot));}" +
                 "}" +
                 "if(fail>0||ok!==players.length){AndroidBridge.report('INSERISCI FALLITO: '+ok+'/'+players.length+' verificati, errori '+fail+'. Salvataggio NON eseguito.');return;}" +
@@ -1463,9 +1463,6 @@ public class MainActivity extends Activity {
         hideTeamSpinner();
         showSavedFormationSummary();
         setStepState("EXCEL", 2, "Rosa caricata: " + countRealPlayers(formazione) + " giocatori");
-        Toast.makeText(this,
-                "Excel caricato. Non ho trovato più rose separate: uso il contenuto completo.",
-                Toast.LENGTH_LONG).show();
     }
 
     private ArrayAdapter<String> buildTeamSpinnerAdapter() {
@@ -1687,7 +1684,6 @@ public class MainActivity extends Activity {
         }
         showSelectedTeamSummary();
         setStepState("EXCEL", 2, "Squadra salvata: " + selectedTeamName + " (" + countRealPlayers(formazione) + " giocatori)");
-        Toast.makeText(this, "Squadra " + selectedTeamName + " selezionata", Toast.LENGTH_SHORT).show();
     }
 
     private void hideTeamSpinner() {
@@ -1939,7 +1935,6 @@ public class MainActivity extends Activity {
                 persistSelectedTeamAndFormation();
                 showSelectedTeamSummary();
                 setStepState("EXCEL", 2, "Squadra salvata: " + selectedTeamName + " (" + formazione.size() + " giocatori)");
-                Toast.makeText(this, "Squadra " + selectedTeamName + " salvata. Non dovrai riselezionarla.", Toast.LENGTH_LONG).show();
                 dialog.dismiss();
             });
         });
