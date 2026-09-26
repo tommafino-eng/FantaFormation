@@ -2406,32 +2406,8 @@ public class MainActivity extends Activity {
                 continue;
             }
 
-            String normalizedOfficialName =
-                    normalize(
-                            officialPlayer.name
-                    );
-
-            String role =
-                    officialPlayer.role;
-
-            if (role.isEmpty()) {
-
-                String cachedRole =
-                        roleCache.getRole(
-                                normalizedOfficialName
-                        );
-
-                if (!cachedRole.isEmpty()) {
-                    role = cachedRole;
-                }
-            }
-
-            ProbabilityInfo probability =
-                    probabilities.get(
-                            normalizedOfficialName
-                    );
-
-            String role = !cachedRole.isEmpty() ? cachedRole : officialPlayer.role;
+                String normalizedOfficialName = normalize(officialPlayer.name);
+                String role = !cachedRole.isEmpty() ? cachedRole : officialPlayer.role;
             // Se l'utente non ha mai sovrascritto il ruolo, salva come default quello rilevato da Leghe/Fantacalcio.
             if (cachedRole.isEmpty() && !officialPlayer.role.isEmpty()) {
                 roleCache.setRole(normalizedExcel, officialPlayer.role);
@@ -2461,9 +2437,8 @@ public class MainActivity extends Activity {
             result.add(player);
         }
 
-            if (gazzetta.containsKey(
-                    normalizedOfficialName
-            )) {
+            return result;
+        }
 
     private Map<String, AdvancedStats> parseAdvancedStats(String html) {
         Map<String, AdvancedStats> result = new HashMap<>();
@@ -2471,13 +2446,15 @@ public class MainActivity extends Activity {
         Document document = Jsoup.parse(html);
 
         for (Element table : document.select("table")) {
-            Elements headerCells = table.select("thead tr").first() != null
-                    ? table.select("thead tr").first().select("th,td")
-                    : table.select("tr").first().select("th,td");
+            Element header = table.select("thead tr").first();
+            if (header == null) header = table.select("tr").first();
+            if (header == null) continue;
+
+            Elements headerCells = header.select("th,td");
             if (headerCells.size() < 4) continue;
 
-            Map<String,Integer> idx = new HashMap<>();
-            for (int i=0;i<headerCells.size();i++) {
+            Map<String, Integer> idx = new HashMap<>();
+            for (int i = 0; i < headerCells.size(); i++) {
                 String h = normalize(headerCells.get(i).text());
                 if (h.contains("calciatore") || h.equals("nome") || h.equals("giocatore")) idx.put("name", i);
                 if (h.equals("pv") || h.contains("presenze")) idx.put("pv", i);
@@ -2492,28 +2469,31 @@ public class MainActivity extends Activity {
                 if (h.contains("rigori sbagliati")) idx.put("penMiss", i);
             }
 
-            if (sky.containsKey(
-                    normalizedOfficialName
-            )) {
+            if (!idx.containsKey("name")) continue;
+            for (Element row : table.select("tr")) {
+                Elements cells = row.select("th,td");
+                Integer nameIndex = idx.get("name");
+                if (nameIndex == null || nameIndex >= cells.size()) continue;
 
-                externalAgreement++;
+                String name = cleanName(cells.get(nameIndex).text());
+                if (name.isEmpty() || isLikelyHeader(name)) continue;
+
+                AdvancedStats stats = new AdvancedStats();
+                stats.appearances = valueAt(cells, idx, "pv", 0);
+                stats.averageVote = doubleAt(cells, idx, "mv", 0);
+                stats.fantasyAverage = doubleAt(cells, idx, "fm", 0);
+                stats.goals = valueAt(cells, idx, "goals", 0);
+                stats.assists = valueAt(cells, idx, "assists", 0);
+                stats.penaltiesScored = valueAt(cells, idx, "pen", 0);
+                stats.penaltiesTaken = valueAt(cells, idx, "penTaken", 0);
+                stats.yellow = valueAt(cells, idx, "yellow", 0);
+                stats.red = valueAt(cells, idx, "red", 0);
+                stats.penaltiesMissed = valueAt(cells, idx, "penMiss", 0);
+                stats.consistency = stats.averageVote > 0 ? Math.max(0, 100 - Math.abs(stats.averageVote - 6.0) * 25) : 50;
+                stats.recentForm = stats.fantasyAverage > 0 ? clampDouble((stats.fantasyAverage - 4.0) * 20.0, 0, 100) : 50;
+
+                result.put(normalize(name), stats);
             }
-
-            Player player =
-                    new Player(
-                            excelName,
-                            officialPlayer.name,
-                            officialPlayer.team,
-                            role,
-                            officialPlayer.classicQuote,
-                            officialPlayer.fvm,
-                            probable,
-                            externalAgreement,
-                            starter,
-                            bench
-                    );
-
-            result.add(player);
         }
         return result;
     }
