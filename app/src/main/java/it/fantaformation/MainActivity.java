@@ -1,10 +1,14 @@
 package it.fantaformation;
 
 import android.app.Activity;
+import android.app.AlarmManager;
 import android.app.AlertDialog;
 import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.os.Bundle;
+import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Build;
@@ -83,6 +87,12 @@ public class MainActivity extends Activity {
     private static final String PREFS_APP = "fanta_formation_prefs";
     private static final String PREF_SAVED_FORMATION = "saved_formation";
     private static final String PREF_SELECTED_TEAM = "selected_team";
+    private static final String PREF_AUTO_WEEKLY = "auto_weekly_enabled";
+    private static final String PREF_AUTO_HOUR = "auto_weekly_hour";
+    private static final String PREF_AUTO_MINUTE = "auto_weekly_minute";
+    private static final int WEEKLY_ALARM_REQUEST = 4210;
+    private static final String NOTIFICATION_CHANNEL_ID = "fantaformation_status";
+    private static final int NOTIFICATION_PERMISSION_REQUEST = 4310;
     private static final String ACTION_SCHEDULED_AUTO = "it.fantaformation.ACTION_SCHEDULED_AUTO";
     private static final String LEGA_HOME_URL = "https://leghe.fantacalcio.it/yoooo";
 
