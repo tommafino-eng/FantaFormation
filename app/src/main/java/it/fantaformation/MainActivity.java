@@ -3533,20 +3533,5 @@ public class MainActivity extends Activity {
         normalized = normalized.replaceAll("\\s+", " ").trim();
         return normalized;
     }
-    private static class PlayerRoleCache {
-        private final android.content.SharedPreferences prefs;
-        PlayerRoleCache(Context c) { prefs = c.getSharedPreferences("player_roles", MODE_PRIVATE); }
-        String getRole(String key) { return key == null ? "" : prefs.getString(key, ""); }
-        void setRole(String key, String role) { if (key != null && !key.isEmpty()) prefs.edit().putString(key, role == null ? "" : role).apply(); }
-    }
-
-    private static class CredentialsManager {
-        private final android.content.SharedPreferences prefs;
-        CredentialsManager(Context c) { prefs = c.getSharedPreferences("credentials", MODE_PRIVATE); }
-        String getUsername() { return prefs.getString("username", ""); }
-        String getPassword() { return prefs.getString("password", ""); }
-        boolean hasCredentials() { return !getUsername().trim().isEmpty() && !getPassword().isEmpty(); }
-        void saveCredentials(String user, String pass) { prefs.edit().putString("username", user == null ? "" : user).putString("password", pass == null ? "" : pass).apply(); }
-    }
-
+    // PlayerRoleCache e CredentialsManager sono classi top-level separate nel package.
 }
