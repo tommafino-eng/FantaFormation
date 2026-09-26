@@ -7,6 +7,19 @@ workflows:
       java: 17
 
     scripts:
+      - name: Prepare Android SDK
+        script: |
+          set -e
+          SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          # Rimuove componenti eventualmente scaricati corrotti (es. "Archive is not a ZIP archive").
+          rm -rf "$SDK_ROOT/build-tools/34.0.0" "$SDK_ROOT/build-tools/35.0.0"
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+          for i in 1 2 3; do
+            "$SDKMANAGER" "platforms;android-35" "build-tools;35.0.0" && break
+            echo "Retry sdkmanager install ($i)..."
+            sleep 5
+          done
       - name: Build APK
         script: |
           gradle assembleDebug
