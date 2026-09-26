@@ -1407,6 +1407,16 @@ public class MainActivity extends Activity {
             }
         }
 
+        if (detectedTeams.size() >= 2) {
+            // Struttura a squadre riconosciuta: attendiamo la scelta dell'utente,
+            // non carichiamo mai le righe grezze (colonna "costo" al posto del giocatore).
+            selectedTeamName = "";
+            setStepState("EXCEL", 1, "Seleziona la tua squadra dal menu");
+            resultText.setText("Ho trovato " + detectedTeamNames.size() + " squadre.\n\nSeleziona la tua squadra dal menu a tendina qui sopra.");
+            Toast.makeText(this, "Seleziona la tua squadra dal menu a tendina", Toast.LENGTH_LONG).show();
+            return;
+        }
+
         // Nessuna colonna squadra riconosciuta: manteniamo il comportamento di fallback.
         selectedTeamName = "";
         formazione = new ArrayList<>(result);
