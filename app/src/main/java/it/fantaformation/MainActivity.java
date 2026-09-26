@@ -2251,6 +2251,8 @@ public class MainActivity extends Activity {
 
             String normalizedExcel = normalize(excelName);
             String cachedRole = roleCache.getRole(normalizedExcel);
+            // Ruolo strutturale certo: rows[3] = 3 P + 8 D + 8 C + 6 A, calcolato in detectTeams().
+            String excelRole = row.length > 3 && row[3] != null ? row[3].trim() : "";
             OfficialPlayer officialPlayer = findOfficialPlayer(excelName, official);
 
             if (officialPlayer == null) {
@@ -2260,7 +2262,7 @@ public class MainActivity extends Activity {
                                 excelName,
                                 excelName,
                                 "",
-                                cachedRole,
+                                !cachedRole.isEmpty() ? cachedRole : excelRole,
                                 0,
                                 0,
                                 0,
@@ -2274,11 +2276,14 @@ public class MainActivity extends Activity {
             }
 
                 String normalizedOfficialName = normalize(officialPlayer.name);
-                String role = !cachedRole.isEmpty() ? cachedRole : officialPlayer.role;
-            // Se l'utente non ha mai sovrascritto il ruolo, salva come default quello rilevato da Leghe/Fantacalcio.
-            if (cachedRole.isEmpty() && !officialPlayer.role.isEmpty()) {
-                roleCache.setRole(normalizedExcel, officialPlayer.role);
-                roleCache.setRole(normalizedOfficialName, officialPlayer.role);
+                String role = !cachedRole.isEmpty() ? cachedRole : (!excelRole.isEmpty() ? excelRole : officialPlayer.role);
+            // Se l'utente non ha mai sovrascritto il ruolo, salva come default quello della rosa Excel (o quello scoperto online in mancanza).
+            if (cachedRole.isEmpty()) {
+                String defaultRole = !excelRole.isEmpty() ? excelRole : officialPlayer.role;
+                if (!defaultRole.isEmpty()) {
+                    roleCache.setRole(normalizedExcel, defaultRole);
+                    roleCache.setRole(normalizedOfficialName, defaultRole);
+                }
             }
 
             ProbabilityInfo probability = probabilities.get(normalizedOfficialName);
