@@ -76,6 +76,69 @@ public class MainActivity extends Activity {
 
     private List<String[]> formazione;
     private PlayerRoleCache roleCache;
+    private CredentialsManager credentialsManager;
+
+    private static final String PREFS_APP = "fanta_formation_prefs";
+    private static final String PREF_SAVED_FORMATION = "saved_formation";
+    private static final String PREF_SELECTED_TEAM = "selected_team";
+    private static final String ACTION_SCHEDULED_AUTO = "it.fantaformation.ACTION_SCHEDULED_AUTO";
+    private static final String LEGA_HOME_URL = "https://leghe.fantacalcio.it/yoooo";
+
+    private static final List<String> ALLOWED_FORMATIONS = Arrays.asList(
+            "3-4-3", "3-5-2", "3-4-1-2", "3-4-2-1", "3-5-1-1",
+            "4-3-3", "4-4-2", "4-3-1-2", "4-2-3-1", "4-1-4-1", "4-5-1",
+            "5-3-2", "5-4-1", "5-2-3");
+
+    // URL verificate su fantacalcio.it e sport.sky.it (26/09/2026).
+    private static final String FANTACALCIO_QUOTE = "https://www.fantacalcio.it/quotazioni-fantacalcio";
+    private static final String FANTACALCIO_PROBABILI = "https://www.fantacalcio.it/probabili-formazioni-serie-a";
+    private static final String FANTACALCIO_STATS = "https://www.fantacalcio.it/statistiche-serie-a";
+    private static final String FANTACALCIO_STATS_SUMMARY = FANTACALCIO_STATS;
+    private static final String FANTACALCIO_NEWS = "https://www.fantacalcio.it/news";
+    private static final String FANTACALCIO_CONSIGLI = "https://www.fantacalcio.it/consigli-fantacalcio";
+    private static final String FANTACALCIO_CALENDAR = "https://www.fantacalcio.it/serie-a/calendario";
+    private static final String FANTACALCIO_RECENT_BASE = "https://www.fantacalcio.it/voti-fantacalcio-serie-a";
+    private static final String GAZZETTA_PROBABILI = "https://www.fantacalcio.it/probabili-formazioni-serie-a";
+    private static final String SKY_PROBABILI = "https://sport.sky.it/calcio/serie-a/probabili-formazioni";
+
+    private final ExecutorService executor = Executors.newFixedThreadPool(6);
+
+    private PowerManager.WakeLock automationWakeLock;
+    private LinearLayout statusContainer;
+    private final Map<String, TextView> statusViews = new LinkedHashMap<>();
+    private Spinner teamSpinner;
+    private Map<String, List<String[]>> detectedTeams = new LinkedHashMap<>();
+    private List<String> detectedTeamNames = new ArrayList<>();
+    private String selectedTeamName = "";
+    private boolean updatingTeamSpinner = false;
+
+    private boolean autoFlowEnabled = false;
+    private boolean autoRunRequested = false;
+    private boolean loginAttempted = false;
+    private boolean loginInProgress = false;
+    private boolean loginAutoScheduled = false;
+    private boolean lineupLoadTriggered = false;
+    private int formationNavAttempts = 0;
+    private boolean saveVerificationStarted = false;
+    private boolean notificationPending = false;
+    private boolean pendingAutoFill = false;
+    private boolean autoInsertAfterFormationNav = false;
+
+    private FormationResult currentBestResult;
+    private ArrayList<Player> lastParsedPlayers;
+
+    private void acquireAutomationWakeLock() {
+        try {
+            if (automationWakeLock == null) {
+                PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+                automationWakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "FantaFormation:AutomationWakeLock");
+            }
+            if (!automationWakeLock.isHeld()) {
+                automationWakeLock.acquire(10 * 60 * 1000L);
+            }
+        } catch (Throwable ignored) {
+        }
+    }
 
     private void releaseAutomationWakeLock() {
         try {
@@ -141,6 +204,7 @@ public class MainActivity extends Activity {
 
 
         roleCache = new PlayerRoleCache(this);
+        credentialsManager = new CredentialsManager(this);
         buildInterface();
         if (formazione != null && !formazione.isEmpty()) {
             setStepState("EXCEL", 2, "Rosa salvata disponibile: " + formazione.size() + " righe");
@@ -1329,54 +1393,6 @@ public class MainActivity extends Activity {
             }
         }
 
-            String rowText =
-                    row != null
-                            ? row.text()
-                            : "";
-
-            OfficialPlayer player =
-                    new OfficialPlayer();
-
-            player.name =
-                    name;
-
-            player.profileUrl =
-                    href;
-
-            player.team =
-                    extractTeam(
-                            rowText
-                    );
-
-            player.classicQuote =
-                    extractClassicQuote(
-                            row
-                    );
-
-            player.fvm =
-                    extractFvm(
-                            row
-                    );
-
-            player.role =
-                    extractRoleFromPlayerElement(
-                            link,
-                            row
-                    );
-
-            if (player.role.isEmpty()) {
-
-                player.role =
-                        extractRoleFromAttributes(
-                                row
-                        );
-            }
-
-            String key =
-                    normalize(
-                            player.name
-                    );
-
         // Nessuna colonna squadra riconosciuta: manteniamo il comportamento di fallback.
         selectedTeamName = "";
         formazione = new ArrayList<>(result);
@@ -1406,163 +1422,8 @@ public class MainActivity extends Activity {
         }
     }
 
-    private String extractRoleFromPlayerElement(
-            Element link,
-            Element row
-    ) {
-
-        String[] attributes = {
-                "data-role",
-                "data-ruolo",
-                "role",
-                "title",
-                "aria-label",
-                "class"
-        };
-
-        for (String attribute :
-                attributes) {
-
-            String value =
-                    link.attr(
-                            attribute
-                    );
-
-            String role =
-                    roleFromText(
-                            value
-                    );
-
-            if (!role.isEmpty()) {
-                return role;
-            }
-        }
-
-        if (row != null) {
-
-            Elements elements =
-                    row.select(
-                            "[data-role], " +
-                            "[data-ruolo], " +
-                            "[title], " +
-                            "[aria-label]"
-                    );
-
-            for (Element element :
-                    elements) {
-
-                for (String attribute :
-                        attributes) {
-
-                    String value =
-                            element.attr(
-                                    attribute
-                            );
-
-                    String role =
-                            roleFromText(
-                                    value
-                            );
-
-                    if (!role.isEmpty()) {
-                        return role;
-                    }
-                }
-            }
-        }
-
-        return "";
-    }
-
-    private String extractRoleFromAttributes(
-            Element row
-    ) {
-
-        if (row == null) {
-            return "";
-        }
-
-        String html =
-                row.outerHtml();
-
-        return roleFromText(
-                html
-        );
-    }
-
-    private String roleFromText(
-            String text
-    ) {
-
-        if (text == null) {
-            return "";
-        }
-
-        String normalized =
-                normalize(text);
-
-        if (normalized.contains(
-                "portiere"
-        )) {
-            return "P";
-        }
-
-        if (normalized.contains(
-                "difensore"
-        )) {
-            return "D";
-        }
-
-        if (normalized.contains(
-                "centrocampista"
-        )) {
-            return "C";
-        }
-
-        if (normalized.contains(
-                "attaccante"
-        )) {
-            return "A";
-        }
-
-        /*
-         * Abbreviazioni consentite soltanto se
-         * presenti come attributo strutturato.
-         */
-        if (normalized.matches(
-                ".*\\bp\\b.*"
-        )) {
-            return "P";
-        }
-
-        if (normalized.matches(
-                ".*\\bd\\b.*"
-        )) {
-            return "D";
-        }
-
-        if (normalized.matches(
-                ".*\\bc\\b.*"
-        )) {
-            return "C";
-        }
-
-        if (normalized.matches(
-                ".*\\ba\\b.*"
-        )) {
-            return "A";
-        }
-
-        return "";
-    }
-
-    private String extractTeam(
-            String text
-    ) {
-
-        if (text == null) {
-            return "";
-        }
+    private ArrayAdapter<String> buildTeamSpinnerAdapter() {
+        List<String> labels = detectedTeamNames != null ? detectedTeamNames : new ArrayList<>();
         return new ArrayAdapter<String>(this, android.R.layout.simple_spinner_item, labels) {
             @Override public View getView(int position, View convertView, android.view.ViewGroup parent) {
                 TextView v = (TextView) super.getView(position, convertView, parent);
