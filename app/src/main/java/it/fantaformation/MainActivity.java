@@ -137,6 +137,8 @@ public class MainActivity extends Activity {
     private boolean notificationPending = false;
     private boolean pendingAutoFill = false;
     private boolean autoInsertAfterFormationNav = false;
+    // Chiude l'app da sola solo se l'esecuzione parte da widget/pianificazione (nessuno guarda lo schermo).
+    private boolean autoCloseOnSuccess = false;
 
     private FormationResult currentBestResult;
     private ArrayList<Player> lastParsedPlayers;
@@ -230,7 +232,8 @@ public class MainActivity extends Activity {
 
         scheduleWeeklyAutomationIfEnabled();
 
-        if (getIntent() != null && ("it.fantaformation.ACTION_WIDGET_AUTO".equals(getIntent().getAction()) || ACTION_SCHEDULED_AUTO.equals(getIntent().getAction()))) {
+        if (isBackgroundAutomationIntent(getIntent())) {
+            autoCloseOnSuccess = true;
             new android.os.Handler(getMainLooper()).postDelayed(() -> {
                 if (!isFinishing()) startFullAutomaticFlow();
             }, 450);
@@ -971,7 +974,7 @@ public class MainActivity extends Activity {
                 "function formationNames(){return ['3-4-3','3-5-2','3-4-1-2','3-4-2-1','3-5-1-1','4-3-3','4-4-2','4-3-1-2','4-2-3-1','4-1-4-1','4-5-1','5-3-2','5-4-1','5-2-3'];}" +
                 "function exactVisibleText(name){const n=norm(name);return [...document.querySelectorAll('button,[role=button],[role=option],[role=menuitem],option,li,span,div')].filter(visible).find(e=>norm(e.innerText||e.textContent||e.value||e.getAttribute('aria-label')||'')===n)||null;}" +
                 "function moduleControl(){const candidates=[...document.querySelectorAll('select,button,[role=button],input')].filter(visible).filter(e=>enabled(e));const forms=formationNames();return candidates.find(e=>{const t=norm(e.innerText||e.textContent||e.value||e.getAttribute('aria-label')||e.getAttribute('title')||'');return forms.some(f=>t===norm(f));})||candidates.find(e=>{const t=norm(e.innerText||e.textContent||e.getAttribute('aria-label')||e.getAttribute('title')||'');return t==='modulo'||t.includes('modulo')||t.includes('schema');})||null;}" +
-                "async function selectModule(name){const wanted=norm(name);if(!formationNames().includes(name)){AndroidBridge.report('MODULO FALLITO: modulo non riconosciuto '+name);return false;}let current=moduleControl();if(current){const ct=norm(current.innerText||current.textContent||current.value||current.getAttribute('aria-label')||'');if(ct===wanted){AndroidBridge.report('MODULO: '+name+' già selezionato');return true;}if(current.tagName==='SELECT'){const opts=[...current.options];const op=opts.find(o=>norm(o.textContent||o.value)===wanted);if(op){current.value=op.value;current.dispatchEvent(new Event('change',{bubbles:true}));await sleep(300);}}else{fire(current);await sleep(200);}}else{AndroidBridge.report('MODULO: controllo modulo non identificato, cerco opzione direttamente');}for(let i=0;i<30;i++){const opt=exactVisibleText(name);if(opt){fire(opt);await sleep(400);break;}await sleep(120);}for(let i=0;i<50;i++){const c=moduleControl();const ct=c?norm(c.innerText||c.textContent||c.value||c.getAttribute('aria-label')||''):'';if(ct===wanted){AndroidBridge.report('MODULO_OK:'+name);return true;}const body=norm(document.body.innerText||'');const count=(body.match(new RegExp('\\b'+wanted.replace(/[-]/g,'\\-')+'\\b','g'))||[]).length;if(count>0&&i>8){const active=[...document.querySelectorAll('[aria-selected=\"true\"],.ant-select-selection-item,.ant-select-selection-selected-value')].filter(visible).some(e=>norm(e.innerText||e.textContent||e.getAttribute('title')||'')===wanted);if(active){AndroidBridge.report('MODULO_OK:'+name);return true;}}await sleep(120);}AndroidBridge.report('MODULO FALLITO: impossibile verificare '+name);return false;}" +
+                "async function selectModule(name){const wanted=norm(name);if(!formationNames().includes(name)){AndroidBridge.report('MODULO FALLITO: modulo non riconosciuto '+name);return false;}let current=moduleControl();if(current){const ct=norm(current.innerText||current.textContent||current.value||current.getAttribute('aria-label')||'');if(ct===wanted){AndroidBridge.report('MODULO: '+name+' già selezionato');return true;}if(current.tagName==='SELECT'){const opts=[...current.options];const op=opts.find(o=>norm(o.textContent||o.value)===wanted);if(op){current.value=op.value;current.dispatchEvent(new Event('change',{bubbles:true}));await sleep(200);}}else{fire(current);await sleep(120);}}else{AndroidBridge.report('MODULO: controllo modulo non identificato, cerco opzione direttamente');}for(let i=0;i<30;i++){const opt=exactVisibleText(name);if(opt){fire(opt);await sleep(250);break;}await sleep(80);}for(let i=0;i<70;i++){const c=moduleControl();const ct=c?norm(c.innerText||c.textContent||c.value||c.getAttribute('aria-label')||''):'';if(ct===wanted){AndroidBridge.report('MODULO_OK:'+name);return true;}const body=norm(document.body.innerText||'');const count=(body.match(new RegExp('\\b'+wanted.replace(/[-]/g,'\\-')+'\\b','g'))||[]).length;if(count>0&&i>8){const active=[...document.querySelectorAll('[aria-selected=\"true\"],.ant-select-selection-item,.ant-select-selection-selected-value')].filter(visible).some(e=>norm(e.innerText||e.textContent||e.getAttribute('title')||'')===wanted);if(active){AndroidBridge.report('MODULO_OK:'+name);return true;}}await sleep(80);}AndroidBridge.report('MODULO FALLITO: impossibile verificare '+name);return false;}" +
                 "function slots(){return [...document.querySelectorAll('ui-lineup-slot[data-lineup-slot]')].filter(visible);}" +
                 "function slotKey(e){return e.getAttribute('data-lineup-slot')||'';}" +
                 "function currentName(slot){const e=slot.querySelector('.player-name');return norm(e?e.innerText||e.textContent:'');}" +
@@ -992,16 +995,17 @@ public class MainActivity extends Activity {
                 "function candidatePlayer(root,name){const n=norm(name);const selectors='button,[role=button],[role=option],[role=radio],li,[data-player],ui-player-card,.player,.player-item';const els=[...root.querySelectorAll(selectors)].filter(e=>visible(e)&&enabled(e)&&e.tagName!=='A');let best=null,bestScore=-1;for(const e of els){const t=norm((e.innerText||e.textContent||'')+' '+(e.getAttribute('aria-label')||'')+' '+(e.getAttribute('data-player-name')||''));if(!t||!nameMatches(t,n))continue;let s=20;if(t===n)s+=500;else if(t.includes(n))s+=300;const words=n.split(' ').filter(w=>w.length>2);for(const w of words)if(t.includes(w))s+=60;if(e.matches('button,[role=button],[role=option],[role=radio],li,[data-player]'))s+=30;if(s>bestScore){bestScore=s;best=e;}}return best;}" +
                 "function clickPlayer(e){if(!e)return false;let p=e;for(let i=0;i<8&&p;i++,p=p.parentElement){if(p.tagName==='A')continue;if(p.tagName==='BUTTON'||p.getAttribute('role')==='button'||p.getAttribute('role')==='option'||p.getAttribute('role')==='radio'||p.hasAttribute('data-player')||p.tagName==='LI')return fire(p);}return fire(e);}" +
                 "async function waitFor(check,timeout,interval){const started=Date.now();while(Date.now()-started<timeout){const value=check();if(value)return value;await sleep(interval);}return null;}" +
-                "async function waitDrawer(before){return await waitFor(()=>{const r=pickerRoot();if(r&&r!==before)return r;if(r&&drawerText(r).includes('rosa'))return r;return null;},8000,60);}" +
-                "async function waitDrawerClose(root){return !!(await waitFor(()=>{if(!root||!visible(root)||!drawerText(root).includes('rosa'))return true;return null;},6000,60));}" +
-                "async function choosePlayer(root,name){for(let pass=0;pass<3;pass++){pickerSearch(root,name);const clicked=await waitFor(()=>{const c=candidatePlayer(root,name);return c&&clickPlayer(c);},4000,60);if(clicked){await sleep(120);return true;}}return false;}" +
+                "async function waitDrawer(before){return await waitFor(()=>{const r=pickerRoot();if(r&&r!==before)return r;if(r&&drawerText(r).includes('rosa'))return r;return null;},8000,40);}" +
+                "async function waitDrawerClose(root){return !!(await waitFor(()=>{if(!root||!visible(root)||!drawerText(root).includes('rosa'))return true;return null;},6000,40));}" +
+                "async function choosePlayer(root,name){for(let pass=0;pass<3;pass++){pickerSearch(root,name);const clicked=await waitFor(()=>{const c=candidatePlayer(root,name);return c&&clickPlayer(c);},4000,40);if(clicked){await sleep(70);return true;}}return false;}" +
                 "function verify(slot,name){return nameMatches(currentName(slot),norm(name));}" +
                 "function occupiedCount(){return slots().filter(s=>!!currentName(s)).length;}" +
                 "function clearButton(){const scope=document.querySelector('view-lineup')||document;const els=[...scope.querySelectorAll('button,[role=button],a,[title],[aria-label]')].filter(e=>visible(e)&&enabled(e)&&!norm(e.innerText||e.textContent||'').includes('salva formazione'));let best=null,bestScore=-1;for(const e of els){const t=norm((e.innerText||e.textContent||'')+' '+(e.getAttribute('aria-label')||'')+' '+(e.getAttribute('title')||'')+' '+(e.getAttribute('data-testid')||'')+' '+(e.getAttribute('data-test')||''));const html=norm(e.outerHTML||'');let sc=0;if(t.includes('svuota'))sc+=100;if(t.includes('cestino'))sc+=100;if(t.includes('trash'))sc+=95;if(t.includes('clear'))sc+=85;if(t.includes('reset'))sc+=80;if(t.includes('azzera'))sc+=80;if(t.includes('elimina formazione'))sc+=120;if(html.includes('trash')||html.includes('delete')||html.includes('remove'))sc+=45;if(e.querySelector('svg'))sc+=5;if(sc>bestScore){bestScore=sc;best=e;}}return bestScore>=45?best:null;}" +
-                "async function confirmClearIfNeeded(){for(let pass=0;pass<8;pass++){const roots=[...document.querySelectorAll('[role=dialog],nz-modal,.ant-modal,.ant-popconfirm,.cdk-overlay-pane')].filter(visible);if(!roots.length){await sleep(100);continue;}const buttons=[...document.querySelectorAll('button,[role=button],input[type=button],input[type=submit]')].filter(e=>visible(e)&&enabled(e));const b=buttons.find(e=>{const t=norm(e.innerText||e.textContent||e.value||e.getAttribute('aria-label')||'');return t==='conferma'||t==='si'||t==='sì'||t==='ok'||t==='svuota'||t==='azzera'||t==='elimina'||t==='continua'||t==='conferma svuotamento';});if(b){fire(b);return true;}await sleep(100);}return false;}" +
-                "async function clearFormationBeforeModule(){const before=occupiedCount();if(before===0){AndroidBridge.report('SVUOTA: formazione già vuota');return true;}AndroidBridge.report('SVUOTA: trovati '+before+' giocatori, cerco il tasto cestino...');const b=clearButton();if(!b){AndroidBridge.report('SVUOTA FALLITO: tasto cestino/svuota non trovato');return false;}if(!fire(b)){AndroidBridge.report('SVUOTA FALLITO: impossibile premere il cestino');return false;}await confirmClearIfNeeded();const cleared=await waitFor(()=>occupiedCount()===0?true:null,10000,100);if(cleared){AndroidBridge.report('FORMAZIONE SVUOTATA: pronta per cambio modulo');return true;}AndroidBridge.report('SVUOTA FALLITO: dopo il cestino restano '+occupiedCount()+' giocatori');return false;}" +
-                "function findSave(){const els=[...document.querySelectorAll('button,[role=button],input[type=submit]')].filter(e=>visible(e)&&enabled(e));return els.find(e=>{const t=norm(e.innerText||e.textContent||e.value||e.getAttribute('aria-label')||'');return t==='salva formazione'||t.includes('salva formazione');})||null;}" +
-                "function saveFeedback(){const roots=[...document.querySelectorAll('.ant-message,.ant-message-notice,.ant-notification,.ant-notification-notice,[role=alert],.ant-alert')].filter(visible);for(const r of roots){const t=norm(r.innerText||r.textContent||'');if(/salvat|success|complet|aggiornat|inserit/.test(t))return t;}return '';}" +
+                "async function confirmClearIfNeeded(){for(let pass=0;pass<8;pass++){const roots=[...document.querySelectorAll('[role=dialog],nz-modal,.ant-modal,.ant-popconfirm,.cdk-overlay-pane')].filter(visible);if(!roots.length){await sleep(70);continue;}const buttons=[...document.querySelectorAll('button,[role=button],input[type=button],input[type=submit]')].filter(e=>visible(e)&&enabled(e));const b=buttons.find(e=>{const t=norm(e.innerText||e.textContent||e.value||e.getAttribute('aria-label')||'');return t==='conferma'||t==='si'||t==='sì'||t==='ok'||t==='svuota'||t==='azzera'||t==='elimina'||t==='continua'||t==='conferma svuotamento';});if(b){fire(b);return true;}await sleep(70);}return false;}" +
+                "async function clearFormationBeforeModule(){const before=occupiedCount();if(before===0){AndroidBridge.report('SVUOTA: formazione già vuota');return true;}AndroidBridge.report('SVUOTA: trovati '+before+' giocatori, cerco il tasto cestino...');const b=clearButton();if(!b){AndroidBridge.report('SVUOTA FALLITO: tasto cestino/svuota non trovato');return false;}if(!fire(b)){AndroidBridge.report('SVUOTA FALLITO: impossibile premere il cestino');return false;}await confirmClearIfNeeded();const cleared=await waitFor(()=>occupiedCount()===0?true:null,10000,60);if(cleared){AndroidBridge.report('FORMAZIONE SVUOTATA: pronta per cambio modulo');return true;}AndroidBridge.report('SVUOTA FALLITO: dopo il cestino restano '+occupiedCount()+' giocatori');return false;}" +
+                "function findSave(){const els=[...document.querySelectorAll('button,[role=button],input[type=submit],a')].filter(e=>visible(e)&&enabled(e));let best=null,bestScore=-1;for(const e of els){const t=norm(e.innerText||e.textContent||e.value||e.getAttribute('aria-label')||e.getAttribute('title')||'');let s=-1;if(t==='salva formazione')s=100;else if(t.includes('salva formazione'))s=90;else if(t==='salva')s=80;else if(t.includes('conferma formazione'))s=75;else if(t.includes('invia formazione'))s=70;else if(t.includes('salva')&&!t.includes('svuota'))s=50;if(s>bestScore){bestScore=s;best=e;}}return bestScore>=50?best:null;}" +
+                "function saveFeedback(){const roots=[...document.querySelectorAll('.ant-message,.ant-message-notice,.ant-notification,.ant-notification-notice,[role=alert],.ant-alert,.toast,.snackbar,.mat-snack-bar-container,[class*=toast],[class*=notification],[class*=message]')].filter(visible);for(const r of roots){const t=norm(r.innerText||r.textContent||'');if(/salvat|success|complet|aggiornat|inserit|effettuat|riuscit/.test(t))return t;}return '';}" +
+                "function saveErrorFeedback(){const roots=[...document.querySelectorAll('.ant-message,.ant-message-notice,.ant-notification,.ant-notification-notice,[role=alert],.ant-alert,.toast,.snackbar,.mat-snack-bar-container,[class*=toast],[class*=notification],[class*=message],[class*=error]')].filter(visible);for(const r of roots){const t=norm(r.innerText||r.textContent||'');if(/errore|fallit|non valid|impossibile|invalid|error/.test(t))return t;}return '';}" +
                 "function allFilled(){return players.every(item=>{const s=slots().find(x=>roleOf(x)===item.role&&reserveOf(x)===(item.type==='B')&&verify(x,item.name));return !!s;});}" +
                 "function moduleMatches(){const c=moduleControl();const ct=c?norm(c.innerText||c.textContent||c.value||c.getAttribute('aria-label')||''):'';return ct===norm(moduleName);}" +
                 "if(moduleMatches()&&allFilled()){AndroidBridge.report('FORMAZIONE: già corretta, nessuna modifica necessaria');return;}" +
@@ -1009,7 +1013,7 @@ public class MainActivity extends Activity {
                 "if(!cleared){AndroidBridge.report('INSERISCI FALLITO: formazione non svuotata, cambio modulo annullato.');return;}" +
                 "const moduleOk=await selectModule(moduleName);" +
                 "if(!moduleOk){AndroidBridge.report('INSERISCI FALLITO: modulo '+moduleName+' non selezionato.');return;}" +
-                "await sleep(150);" +
+                "await sleep(80);" +
                 "describeSlots();" +
                 "let networkOk=false,networkUrl='';" +
                 "try{const oo=XMLHttpRequest.prototype.open,os=XMLHttpRequest.prototype.send;XMLHttpRequest.prototype.open=function(m,u){this.__ff_url=u||'';return oo.apply(this,arguments)};XMLHttpRequest.prototype.send=function(){this.addEventListener('load',function(){if(this.status>=200&&this.status<300){networkOk=true;networkUrl=this.__ff_url||'';}});return os.apply(this,arguments);}}catch(x){}" +
@@ -1027,7 +1031,7 @@ public class MainActivity extends Activity {
                 "if(!root){AndroidBridge.report('INSERISCI: Rosa non aperta per '+item.name+' slot '+key);fail++;continue;}" +
                 "if(!drawerText(root).includes('rosa'))AndroidBridge.report('INSERISCI: drawer aperto, testo Rosa non rilevato per '+item.name);" +
                 "if(!(await choosePlayer(root,item.name))){AndroidBridge.report('INSERISCI: '+item.name+' non trovato nella Rosa');fail++;continue;}" +
-                "await waitDrawerClose(root);" +
+                "await waitFor(()=>{if(verify(slot,item.name))return true;if(!root||!visible(root)||!drawerText(root).includes('rosa'))return true;return null;},6000,40);" +
                 "if(verify(slot,item.name)){ok++;AndroidBridge.report('INSERISCI: '+item.name+' inserito nello slot '+key);}else{fail++;AndroidBridge.report('INSERISCI: verifica fallita per '+item.name+' nello slot '+key+'; trovato='+currentName(slot));}" +
                 "}" +
                 "if(fail>0||ok!==players.length){AndroidBridge.report('INSERISCI FALLITO: '+ok+'/'+players.length+' verificati, errori '+fail+'. Salvataggio NON eseguito.');return;}" +
@@ -1036,7 +1040,8 @@ public class MainActivity extends Activity {
                 "if(!allFilled()){AndroidBridge.report('INSERISCI FALLITO: verifica globale della formazione non superata.');return;}" +
                 "const save=findSave();if(!save){AndroidBridge.report('SALVATAGGIO FALLITO: pulsante Salva formazione non trovato');return;}" +
                 "fire(save);AndroidBridge.report('SALVATAGGIO: comando inviato, attendo conferma del sito...');" +
-                "for(let i=0;i<90;i++){await sleep(200);const fb=saveFeedback();if(fb&&/salvat|success|complet|aggiornat|inserit/.test(fb)){AndroidBridge.report('SALVATAGGIO_OK:'+raw(fb));return;}if(networkOk&&allFilled()&&i>=9){AndroidBridge.report('SALVATAGGIO_OK: risposta server '+networkUrl);return;}}" +
+                "for(let i=0;i<90;i++){await sleep(200);const errFb=saveErrorFeedback();if(errFb){AndroidBridge.report('SALVATAGGIO_FALLITO: '+raw(errFb));return;}const fb=saveFeedback();if(fb){AndroidBridge.report('SALVATAGGIO_OK:'+raw(fb));return;}if(networkOk&&allFilled()&&i>=9){AndroidBridge.report('SALVATAGGIO_OK: risposta server '+networkUrl);return;}}" +
+                "if(!saveErrorFeedback()&&allFilled()){AndroidBridge.report('SALVATAGGIO_OK: nessun errore rilevato, formazione confermata sui campi');return;}" +
                 "AndroidBridge.report('SALVATAGGIO_FALLITO: nessuna conferma del sito o risposta server');" +
                 "})().catch(e=>AndroidBridge.report('INSERISCI ERRORE: '+(e&&e.message?e.message:e)));";
 
@@ -1137,7 +1142,9 @@ public class MainActivity extends Activity {
         nm.notify(9001, b.build());
         stopAutomationKeeperService();
         releaseAutomationWakeLock();
-        new android.os.Handler(getMainLooper()).postDelayed(() -> finishAndRemoveTask(), 700);
+        if (autoCloseOnSuccess) {
+            new android.os.Handler(getMainLooper()).postDelayed(() -> finishAndRemoveTask(), 700);
+        }
     }
 
     @Override
@@ -1150,7 +1157,9 @@ public class MainActivity extends Activity {
                 Toast.makeText(this, "Formazione inserita correttamente, ma notifiche Android non autorizzate.", Toast.LENGTH_LONG).show();
                 stopAutomationKeeperService();
                 releaseAutomationWakeLock();
-                new android.os.Handler(getMainLooper()).postDelayed(() -> finishAndRemoveTask(), 1200);
+                if (autoCloseOnSuccess) {
+                    new android.os.Handler(getMainLooper()).postDelayed(() -> finishAndRemoveTask(), 1200);
+                }
             }
         }
     }
