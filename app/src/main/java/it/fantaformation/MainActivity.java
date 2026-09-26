@@ -986,11 +986,12 @@ public class MainActivity extends Activity {
                 "function describeSlots(){const a=slots().map(s=>({key:slotKey(s),role:roleOf(s),reserve:reserveOf(s),name:currentName(s)}));AndroidBridge.report('MAPPA_SLOT:' + JSON.stringify(a));return a;}" +
                 "function targetSlot(item,used){const all=slots();let candidates=all.filter(s=>{const k=slotKey(s);return roleOf(s)===item.role&&reserveOf(s)===(item.type==='B')&&!used.has(k);});if(item.type==='B'){candidates.sort((x,y)=>slotIndex(x).b-slotIndex(y).b);}else{candidates.sort((x,y)=>slotIndex(x).a-slotIndex(y).a||slotIndex(x).b-slotIndex(y).b);}return candidates.find(s=>!currentName(s))||candidates[0]||null;}" +
                 "function findExisting(item){const n=norm(item.name);return slots().find(s=>roleOf(s)===item.role&&reserveOf(s)===(item.type==='B')&&nameMatches(currentName(s),n));}" +
-                "function drawerRoots(){return [...document.querySelectorAll('nz-drawer,.ant-drawer,.ant-drawer-content-wrapper,.cdk-overlay-pane,[role=dialog]')].filter(visible);}" +
+                "function slotByKey(key){return slots().find(s=>slotKey(s)===key)||null;}" +
+                "function drawerRoots(){return [...document.querySelectorAll('nz-drawer,.ant-drawer,.ant-drawer-content-wrapper,.cdk-overlay-pane,[role=dialog],ui-elastic-container,.belly')].filter(visible);}" +
                 "function pickerRoot(){const rs=drawerRoots();return rs.length?rs[rs.length-1]:null;}" +
                 "function drawerText(root){return norm(root?(root.innerText||root.textContent):'');}" +
                 "function setNative(input,value){const p=Object.getPrototypeOf(input);const d=Object.getOwnPropertyDescriptor(p,'value');if(d&&d.set)d.set.call(input,value);else input.value=value;['input','keyup','change'].forEach(n=>input.dispatchEvent(new Event(n,{bubbles:true})));}" +
-                "function pickerSearch(root,name){if(!root)return false;const ins=[...root.querySelectorAll('input')].filter(visible);const wanted=ins.find(x=>{const z=norm((x.placeholder||'')+' '+(x.getAttribute('aria-label')||'')+' '+(x.getAttribute('name')||''));return x.type==='search'||z.includes('cerca')||z.includes('ricerca')||z.includes('giocatore')||z.includes('player');});const inp=wanted||ins[0];if(!inp)return false;inp.focus();setNative(inp,name);return true;}" +
+                "function pickerSearch(root,name){if(!root)return false;const ins=[...root.querySelectorAll('input[type=search],input[type=text],input:not([type])')].filter(visible);const wanted=ins.find(x=>{const z=norm((x.placeholder||'')+' '+(x.getAttribute('aria-label')||'')+' '+(x.getAttribute('name')||''));return x.type==='search'||z.includes('cerca')||z.includes('ricerca')||z.includes('giocatore')||z.includes('player');});if(!wanted)return false;wanted.focus();setNative(wanted,name);return true;}" +
                 "function nameMatches(text,target){const a=norm(text),b=norm(target);if(!a||!b)return false;if(a===b||a.includes(b)||b.includes(a))return true;const aw=a.split(' ').filter(x=>x.length>2),bw=b.split(' ').filter(x=>x.length>2);if(!aw.length||!bw.length)return false;let hits=0;for(const w of bw)if(aw.some(x=>x===w||x.includes(w)||w.includes(x)))hits++;return hits>=Math.max(1,Math.min(2,bw.length));}" +
                 "function candidatePlayer(root,name){const n=norm(name);const selectors='button,[role=button],[role=option],[role=radio],li,[data-player],ui-player-card,.player,.player-item';const els=[...root.querySelectorAll(selectors)].filter(e=>visible(e)&&enabled(e)&&e.tagName!=='A');let best=null,bestScore=-1;for(const e of els){const t=norm((e.innerText||e.textContent||'')+' '+(e.getAttribute('aria-label')||'')+' '+(e.getAttribute('data-player-name')||''));if(!t||!nameMatches(t,n))continue;let s=20;if(t===n)s+=500;else if(t.includes(n))s+=300;const words=n.split(' ').filter(w=>w.length>2);for(const w of words)if(t.includes(w))s+=60;if(e.matches('button,[role=button],[role=option],[role=radio],li,[data-player]'))s+=30;if(s>bestScore){bestScore=s;best=e;}}return best;}" +
                 "function clickPlayer(e){if(!e)return false;let p=e;for(let i=0;i<8&&p;i++,p=p.parentElement){if(p.tagName==='A')continue;if(p.tagName==='BUTTON'||p.getAttribute('role')==='button'||p.getAttribute('role')==='option'||p.getAttribute('role')==='radio'||p.hasAttribute('data-player')||p.tagName==='LI')return fire(p);}return fire(e);}" +
@@ -1026,12 +1027,15 @@ public class MainActivity extends Activity {
                 "if(!slot){AndroidBridge.report('INSERISCI: slot '+item.role+' non trovato per '+item.name);fail++;continue;}" +
                 "const key=slotKey(slot);used.add(key);" +
                 "let before=pickerRoot();" +
+                "slot=slotByKey(key)||slot;" +
                 "if(!fire(slot)){AndroidBridge.report('INSERISCI: click slot fallito '+key+' per '+item.name);fail++;continue;}" +
                 "let root=await waitDrawer(before);" +
                 "if(!root){AndroidBridge.report('INSERISCI: Rosa non aperta per '+item.name+' slot '+key);fail++;continue;}" +
                 "if(!drawerText(root).includes('rosa'))AndroidBridge.report('INSERISCI: drawer aperto, testo Rosa non rilevato per '+item.name);" +
                 "if(!(await choosePlayer(root,item.name))){AndroidBridge.report('INSERISCI: '+item.name+' non trovato nella Rosa');fail++;continue;}" +
+                "slot=slotByKey(key)||slot;" +
                 "await waitFor(()=>{if(verify(slot,item.name))return true;if(!root||!visible(root)||!drawerText(root).includes('rosa'))return true;return null;},6000,40);" +
+                "slot=slotByKey(key)||slot;" +
                 "if(verify(slot,item.name)){ok++;AndroidBridge.report('INSERISCI: '+item.name+' inserito nello slot '+key);}else{fail++;AndroidBridge.report('INSERISCI: verifica fallita per '+item.name+' nello slot '+key+'; trovato='+currentName(slot));}" +
                 "}" +
                 "if(fail>0||ok!==players.length){AndroidBridge.report('INSERISCI FALLITO: '+ok+'/'+players.length+' verificati, errori '+fail+'. Salvataggio NON eseguito.');return;}" +
