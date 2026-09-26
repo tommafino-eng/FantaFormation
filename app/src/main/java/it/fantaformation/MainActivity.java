@@ -3142,12 +3142,6 @@ public class MainActivity extends Activity {
         return result;
     }
 
-        ArrayList<Player> playersWithoutRole =
-                new ArrayList<>();
-
-        for (Player player :
-                players) {
-
     private void displayResult(ArrayList<Player> players, FormationResult best) {
         StringBuilder sb = new StringBuilder();
         sb.append("ANALISI ONLINE + AI COMPLETATA\n==============================\n\nRUOLI + DATI WEB + CONTESTO GIORNATA + OTTIMIZZATORE AI\n\n");
@@ -3157,8 +3151,8 @@ public class MainActivity extends Activity {
         for (Player player : players) {
             sb.append(player.excelName).append(" → ");
 
+            if (player.role == null || player.role.trim().isEmpty()) {
                 playersWithoutRole.add(player);
-
             } else {
                 sb.append(roleName(player.role));
             }
