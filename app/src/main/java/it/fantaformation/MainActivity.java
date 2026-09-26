@@ -137,8 +137,6 @@ public class MainActivity extends Activity {
     private boolean notificationPending = false;
     private boolean pendingAutoFill = false;
     private boolean autoInsertAfterFormationNav = false;
-    // Chiude l'app da sola solo se l'esecuzione parte da widget/pianificazione (nessuno guarda lo schermo).
-    private boolean autoCloseOnSuccess = false;
 
     private FormationResult currentBestResult;
     private ArrayList<Player> lastParsedPlayers;
@@ -222,6 +220,8 @@ public class MainActivity extends Activity {
         roleCache = new PlayerRoleCache(this);
         credentialsManager = new CredentialsManager(this);
         buildInterface();
+        loadSavedFormation();
+        selectedTeamName = getSharedPreferences(PREFS_APP, MODE_PRIVATE).getString(PREF_SELECTED_TEAM, "").trim();
         if (formazione != null && !formazione.isEmpty()) {
             setStepState("EXCEL", 2, "Rosa salvata disponibile: " + formazione.size() + " righe");
             if (selectedTeamName != null && !selectedTeamName.isEmpty()) showSelectedTeamSummary(); else showSavedFormationSummary();
@@ -233,7 +233,6 @@ public class MainActivity extends Activity {
         scheduleWeeklyAutomationIfEnabled();
 
         if (isBackgroundAutomationIntent(getIntent())) {
-            autoCloseOnSuccess = true;
             new android.os.Handler(getMainLooper()).postDelayed(() -> {
                 if (!isFinishing()) startFullAutomaticFlow();
             }, 450);
@@ -1009,7 +1008,7 @@ public class MainActivity extends Activity {
                 "function saveErrorFeedback(){const roots=[...document.querySelectorAll('.ant-message,.ant-message-notice,.ant-notification,.ant-notification-notice,[role=alert],.ant-alert,.toast,.snackbar,.mat-snack-bar-container,[class*=toast],[class*=notification],[class*=message],[class*=error]')].filter(visible);for(const r of roots){const t=norm(r.innerText||r.textContent||'');if(/errore|fallit|non valid|impossibile|invalid|error/.test(t))return t;}return '';}" +
                 "function allFilled(){return players.every(item=>{const s=slots().find(x=>roleOf(x)===item.role&&reserveOf(x)===(item.type==='B')&&verify(x,item.name));return !!s;});}" +
                 "function moduleMatches(){const c=moduleControl();const ct=c?norm(c.innerText||c.textContent||c.value||c.getAttribute('aria-label')||''):'';return ct===norm(moduleName);}" +
-                "if(moduleMatches()&&allFilled()){AndroidBridge.report('FORMAZIONE: già corretta, nessuna modifica necessaria');return;}" +
+                "if(moduleMatches()&&allFilled()){AndroidBridge.report('SALVATAGGIO_OK: formazione già corretta, nessuna modifica necessaria');return;}" +
                 "const cleared=await clearFormationBeforeModule();" +
                 "if(!cleared){AndroidBridge.report('INSERISCI FALLITO: formazione non svuotata, cambio modulo annullato.');return;}" +
                 "const moduleOk=await selectModule(moduleName);" +
@@ -1146,9 +1145,7 @@ public class MainActivity extends Activity {
         nm.notify(9001, b.build());
         stopAutomationKeeperService();
         releaseAutomationWakeLock();
-        if (autoCloseOnSuccess) {
-            new android.os.Handler(getMainLooper()).postDelayed(() -> finishAndRemoveTask(), 700);
-        }
+        new android.os.Handler(getMainLooper()).postDelayed(() -> finishAndRemoveTask(), 700);
     }
 
     @Override
@@ -1161,9 +1158,7 @@ public class MainActivity extends Activity {
                 Toast.makeText(this, "Formazione inserita correttamente, ma notifiche Android non autorizzate.", Toast.LENGTH_LONG).show();
                 stopAutomationKeeperService();
                 releaseAutomationWakeLock();
-                if (autoCloseOnSuccess) {
-                    new android.os.Handler(getMainLooper()).postDelayed(() -> finishAndRemoveTask(), 1200);
-                }
+                new android.os.Handler(getMainLooper()).postDelayed(() -> finishAndRemoveTask(), 1200);
             }
         }
     }
