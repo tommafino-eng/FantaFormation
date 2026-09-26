@@ -3308,23 +3308,6 @@ public class MainActivity extends Activity {
         builder.show();
     }
 
-    private void displayFormationResult(
-            StringBuilder sb,
-            FormationResult best
-    ) {
-
-        if (!best.valid) {
-
-        currentBestResult = best;
-        if (best != null && best.valid) {
-            sendToLegheButton.setVisibility(View.VISIBLE);
-        } else {
-            sendToLegheButton.setVisibility(View.GONE);
-        }
-
-        displayFormationResult(sb, best);
-    }
-
     private void showRoleAssignmentDialog(ArrayList<Player> playersWithoutRole, ArrayList<Player> allPlayers) {
         showRoleDialogForPlayer(playersWithoutRole, 0, allPlayers);
     }
