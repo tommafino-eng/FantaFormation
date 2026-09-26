@@ -2252,6 +2252,8 @@ public class MainActivity extends Activity {
             String normalizedExcel = normalize(excelName);
             String cachedRole = roleCache.getRole(normalizedExcel);
             // Ruolo strutturale certo: rows[3] = 3 P + 8 D + 8 C + 6 A, calcolato in detectTeams().
+            // Ha sempre la precedenza sulla cache, che può contenere ruoli sbagliati salvati
+            // da tentativi di scraping precedenti a questa correzione.
             String excelRole = row.length > 3 && row[3] != null ? row[3].trim() : "";
             OfficialPlayer officialPlayer = findOfficialPlayer(excelName, official);
 
@@ -2262,7 +2264,7 @@ public class MainActivity extends Activity {
                                 excelName,
                                 excelName,
                                 "",
-                                !cachedRole.isEmpty() ? cachedRole : excelRole,
+                                !excelRole.isEmpty() ? excelRole : cachedRole,
                                 0,
                                 0,
                                 0,
@@ -2276,14 +2278,12 @@ public class MainActivity extends Activity {
             }
 
                 String normalizedOfficialName = normalize(officialPlayer.name);
-                String role = !cachedRole.isEmpty() ? cachedRole : (!excelRole.isEmpty() ? excelRole : officialPlayer.role);
-            // Se l'utente non ha mai sovrascritto il ruolo, salva come default quello della rosa Excel (o quello scoperto online in mancanza).
-            if (cachedRole.isEmpty()) {
-                String defaultRole = !excelRole.isEmpty() ? excelRole : officialPlayer.role;
-                if (!defaultRole.isEmpty()) {
-                    roleCache.setRole(normalizedExcel, defaultRole);
-                    roleCache.setRole(normalizedOfficialName, defaultRole);
-                }
+                String role = !excelRole.isEmpty() ? excelRole : (!cachedRole.isEmpty() ? cachedRole : officialPlayer.role);
+            // Il ruolo Excel non va mai salvato come override utente: si ricalcola sempre dal file.
+            // Solo in assenza di struttura Excel usiamo la cache per ricordare scelte manuali.
+            if (excelRole.isEmpty() && cachedRole.isEmpty() && !officialPlayer.role.isEmpty()) {
+                roleCache.setRole(normalizedExcel, officialPlayer.role);
+                roleCache.setRole(normalizedOfficialName, officialPlayer.role);
             }
 
             ProbabilityInfo probability = probabilities.get(normalizedOfficialName);
