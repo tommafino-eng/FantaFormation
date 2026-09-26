@@ -333,6 +333,7 @@ public class MainActivity extends Activity {
 
         Button scheduleButton = darkButton("🕐  Automazione ogni venerdì", false);
         root.addView(scheduleButton);
+        updateScheduleButton(scheduleButton);
 
         TextView tools = new TextView(this);
         tools.setText("STRUMENTI");
@@ -1197,17 +1198,18 @@ public class MainActivity extends Activity {
                     .putInt(PREF_AUTO_MINUTE, selectedMinute).apply();
             scheduleWeeklyAutomationIfEnabled();
             updateScheduleButton(button);
-            Toast.makeText(this, String.format(Locale.ROOT, "Automazione ogni venerdì alle %02d:%02d attivata", selectedHour, selectedMinute), Toast.LENGTH_LONG).show();
+            promptExactAlarmPermissionIfNeeded();
+            Toast.makeText(this, "Automazione ogni venerdì alle " + String.format(Locale.ROOT, "%02d:%02d", selectedHour, selectedMinute) + " attivata.\n" + nextFridayDescription(selectedHour, selectedMinute), Toast.LENGTH_LONG).show();
         }, hour, minute, true);
         picker.setTitle("Ogni venerdì alle...");
-        picker.setButton(AlertDialog.BUTTON_NEGATIVE, enabled ? "Disattiva" : "Annulla", (d, w) -> {
-            if (enabled) {
+        if (enabled) {
+            picker.setButton(AlertDialog.BUTTON_NEGATIVE, "Disattiva", (d, w) -> {
                 prefs.edit().putBoolean(PREF_AUTO_WEEKLY, false).apply();
                 cancelWeeklyAutomation();
                 updateScheduleButton(button);
                 Toast.makeText(this, "Automazione settimanale disattivata", Toast.LENGTH_SHORT).show();
-            }
-        });
+            });
+        }
         picker.setButton(AlertDialog.BUTTON_NEUTRAL, "Annulla", (d, w) -> d.dismiss());
         picker.show();
     }
@@ -1228,15 +1230,7 @@ public class MainActivity extends Activity {
         if (!prefs.getBoolean(PREF_AUTO_WEEKLY, false)) return;
         int hour = prefs.getInt(PREF_AUTO_HOUR, 18);
         int minute = prefs.getInt(PREF_AUTO_MINUTE, 30);
-        Calendar next = Calendar.getInstance();
-        next.set(Calendar.SECOND, 0);
-        next.set(Calendar.MILLISECOND, 0);
-        next.set(Calendar.HOUR_OF_DAY, hour);
-        next.set(Calendar.MINUTE, minute);
-        int day = next.get(Calendar.DAY_OF_WEEK);
-        int daysUntilFriday = (Calendar.FRIDAY - day + 7) % 7;
-        if (daysUntilFriday == 0 && next.getTimeInMillis() <= System.currentTimeMillis()) daysUntilFriday = 7;
-        next.add(Calendar.DAY_OF_YEAR, daysUntilFriday);
+        Calendar next = nextFridayAt(hour, minute);
 
         AlarmManager am = (AlarmManager) getSystemService(ALARM_SERVICE);
         if (am == null) return;
@@ -1245,9 +1239,59 @@ public class MainActivity extends Activity {
         PendingIntent pi = PendingIntent.getBroadcast(this, WEEKLY_ALARM_REQUEST, intent,
                 PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= 23 ? PendingIntent.FLAG_IMMUTABLE : 0));
         am.cancel(pi);
-        if (Build.VERSION.SDK_INT >= 23) am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, next.getTimeInMillis(), pi);
-        else am.set(AlarmManager.RTC_WAKEUP, next.getTimeInMillis(), pi);
-        Log.d("FANTA_DEBUG", "Automazione programmata per venerdì " + next.getTime());
+        // Un allarme esatto evita che il sistema rimandi l'inserimento oltre la chiusura delle formazioni.
+        boolean canBeExact = Build.VERSION.SDK_INT < 31 || am.canScheduleExactAlarms();
+        if (Build.VERSION.SDK_INT >= 23 && canBeExact) {
+            am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, next.getTimeInMillis(), pi);
+        } else if (Build.VERSION.SDK_INT >= 23) {
+            am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, next.getTimeInMillis(), pi);
+        } else {
+            am.set(AlarmManager.RTC_WAKEUP, next.getTimeInMillis(), pi);
+        }
+        Log.d("FANTA_DEBUG", "Automazione programmata per venerdì " + next.getTime() + " (esatto=" + canBeExact + ")");
+    }
+
+    /** Prossima occorrenza di venerdì all'orario indicato, con un margine di sicurezza
+     * per evitare che un riavvio proprio nell'istante programmato la faccia scattare due volte. */
+    private Calendar nextFridayAt(int hour, int minute) {
+        Calendar next = Calendar.getInstance();
+        next.set(Calendar.SECOND, 0);
+        next.set(Calendar.MILLISECOND, 0);
+        next.set(Calendar.HOUR_OF_DAY, hour);
+        next.set(Calendar.MINUTE, minute);
+        int day = next.get(Calendar.DAY_OF_WEEK);
+        int daysUntilFriday = (Calendar.FRIDAY - day + 7) % 7;
+        if (daysUntilFriday == 0 && next.getTimeInMillis() <= System.currentTimeMillis() + 60_000L) daysUntilFriday = 7;
+        next.add(Calendar.DAY_OF_YEAR, daysUntilFriday);
+        return next;
+    }
+
+    private String nextFridayDescription(int hour, int minute) {
+        Calendar next = nextFridayAt(hour, minute);
+        return "Prossima esecuzione: " + new SimpleDateFormat("EEEE d MMMM 'alle' HH:mm", Locale.ITALIAN).format(next.getTime());
+    }
+
+    private void promptExactAlarmPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT >= 31) {
+            AlarmManager am = (AlarmManager) getSystemService(ALARM_SERVICE);
+            if (am != null && !am.canScheduleExactAlarms()) {
+                Toast.makeText(this, "Per un orario preciso, concedi il permesso \"Allarmi e promemoria\" a FantaFormation nelle impostazioni.", Toast.LENGTH_LONG).show();
+                try {
+                    startActivity(new Intent(android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, Uri.parse("package:" + getPackageName())));
+                } catch (Throwable ignored) {
+                }
+                return;
+            }
+        }
+        // Un secondo prompt, uno alla volta, per non rimandare l'app da due impostazioni di fila.
+        try {
+            PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+            if (pm != null && Build.VERSION.SDK_INT >= 23 && !pm.isIgnoringBatteryOptimizations(getPackageName())) {
+                Toast.makeText(this, "Disattiva l'ottimizzazione batteria per FantaFormation, cos\u00ec l'automazione del venerd\u00ec non viene ritardata dal sistema.", Toast.LENGTH_LONG).show();
+                startActivity(new Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:" + getPackageName())));
+            }
+        } catch (Throwable ignored) {
+        }
     }
 
     private void cancelWeeklyAutomation() {
