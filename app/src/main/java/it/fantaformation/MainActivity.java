@@ -2,6 +2,8 @@ package it.fantaformation;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.Notification;
+import android.app.PendingIntent;
 import android.os.Bundle;
 import android.content.Intent;
 import android.net.Uri;
@@ -85,9 +87,7 @@ public class MainActivity extends Activity {
     private static final String LEGA_HOME_URL = "https://leghe.fantacalcio.it/yoooo";
 
     private static final List<String> ALLOWED_FORMATIONS = Arrays.asList(
-            "3-4-3", "3-5-2", "3-4-1-2", "3-4-2-1", "3-5-1-1",
-            "4-3-3", "4-4-2", "4-3-1-2", "4-2-3-1", "4-1-4-1", "4-5-1",
-            "5-3-2", "5-4-1", "5-2-3");
+            "3-4-3", "3-5-2", "4-3-3", "4-4-2", "4-5-1", "5-3-2", "5-4-1", "5-2-3");
 
     // URL verificate su fantacalcio.it e sport.sky.it (26/09/2026).
     private static final String FANTACALCIO_QUOTE = "https://www.fantacalcio.it/quotazioni-fantacalcio";
@@ -2240,14 +2240,6 @@ public class MainActivity extends Activity {
             OfficialPlayer officialPlayer = findOfficialPlayer(excelName, official);
 
             if (officialPlayer == null) {
-
-                String normalizedName =
-                        normalize(excelName);
-
-                String cachedRole =
-                        roleCache.getRole(
-                                normalizedName
-                        );
 
                 Player player =
                         new Player(
